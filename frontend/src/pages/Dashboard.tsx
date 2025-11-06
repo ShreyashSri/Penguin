@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Image, FileText, Music, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, Image, FileText, Music, Sparkles, Copy, ExternalLink, Loader2, Trash2 } from 'lucide-react';
 import { generateArt, importArt, getCertificate } from '../lib/api';
+import { useToast } from '../components/Toast';
 
 interface Artwork {
   id: string;
@@ -20,18 +21,15 @@ export default function Dashboard() {
   const [provider, setProvider] = useState('openai');
   const [loading, setLoading] = useState(false);
   const [userWallet, setUserWallet] = useState('');
+  const { success, error, info } = useToast();
 
   useEffect(() => {
-    // Load user wallet from localStorage or Web3
     const wallet = localStorage.getItem('walletAddress') || '';
     setUserWallet(wallet);
-    
-    // Load user's artworks
     loadArtworks();
   }, []);
 
   const loadArtworks = async () => {
-    // Fetch user's artworks from backend
     const storedArtworks = localStorage.getItem('artworks');
     if (storedArtworks) {
       setArtworks(JSON.parse(storedArtworks));
@@ -40,7 +38,7 @@ export default function Dashboard() {
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
-      alert('Please enter a prompt');
+      error('Please enter a prompt');
       return;
     }
 
@@ -70,10 +68,10 @@ export default function Dashboard() {
       localStorage.setItem('artworks', JSON.stringify(updatedArtworks));
 
       setPrompt('');
-      alert('Artwork generated and certified successfully!');
-    } catch (error) {
-      console.error('Error generating art:', error);
-      alert('Failed to generate artwork');
+      success('Artwork generated and certified successfully!');
+    } catch (err) {
+      console.error('Error generating art:', err);
+      error('Failed to generate artwork. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -108,10 +106,10 @@ export default function Dashboard() {
       setArtworks(updatedArtworks);
       localStorage.setItem('artworks', JSON.stringify(updatedArtworks));
 
-      alert('Artwork imported and certified successfully!');
-    } catch (error) {
-      console.error('Error importing art:', error);
-      alert('Failed to import artwork');
+      success('Artwork imported and certified successfully!');
+    } catch (err) {
+      console.error('Error importing art:', err);
+      error('Failed to import artwork. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -126,37 +124,58 @@ export default function Dashboard() {
       a.href = url;
       a.download = `certificate-${artworkId}.json`;
       a.click();
-    } catch (error) {
-      console.error('Error downloading certificate:', error);
+      success('Certificate downloaded');
+    } catch (err) {
+      console.error('Error downloading certificate:', err);
+      error('Failed to download certificate');
     }
   };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 text-white">
-      <div className="container mx-auto px-4 py-8">
-        <header className="mb-12">
-          <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-pink-500 to-cyan-500 bg-clip-text text-transparent">
-            Proof-of-Art Studio
-          </h1>
-          <p className="text-xl text-gray-300">Create verifiable AI-generated art with blockchain certification</p>
-          <div className="mt-4 flex items-center space-x-2">
-            <CheckCircle className="text-green-400" size={20} />
-            <span className="text-sm text-gray-400">Wallet: {userWallet.substring(0, 10)}...{userWallet.substring(userWallet.length - 8)}</span>
-          </div>
-        </header>
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    info('Copied to clipboard');
+  };
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Creation Panel */}
-          <div className="lg:col-span-1 bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h2 className="text-2xl font-bold mb-6">Create New Art</h2>
-            
+  const removeArtwork = (id: string) => {
+    const updatedArtworks = artworks.filter(a => a.id !== id);
+    setArtworks(updatedArtworks);
+    localStorage.setItem('artworks', JSON.stringify(updatedArtworks));
+    success('Artwork removed');
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="slide-in-from-bottom">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-teal-600 to-blue-600 bg-clip-text text-transparent">
+            Create & Certify Art
+          </h1>
+          <p className="text-slate-600">Generate AI art or import your work, then get blockchain certification</p>
+        </div>
+        {userWallet && (
+          <div className="mt-4 inline-block px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-slate-600">
+              Wallet: <span className="font-mono text-blue-600">{userWallet.substring(0, 10)}...{userWallet.substring(userWallet.length - 8)}</span>
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-1 slide-in-from-bottom" style={{ animationDelay: '0.1s' }}>
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
+            <div className="flex items-center space-x-2 mb-6">
+              <Sparkles className="text-teal-600" size={24} />
+              <h2 className="text-2xl font-bold text-slate-900">New Artwork</h2>
+            </div>
+
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-2">Content Type</label>
-                <select 
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Content Type</label>
+                <select
                   value={contentType}
                   onChange={(e) => setContentType(e.target.value)}
-                  className="w-full bg-white/20 rounded-lg px-4 py-2 border border-white/30 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all"
                 >
                   <option value="image">Image</option>
                   <option value="text">Text</option>
@@ -165,11 +184,11 @@ export default function Dashboard() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-2">LLM Provider</label>
-                <select 
+                <label className="block text-sm font-semibold text-slate-700 mb-2">LLM Provider</label>
+                <select
                   value={provider}
                   onChange={(e) => setProvider(e.target.value)}
-                  className="w-full bg-white/20 rounded-lg px-4 py-2 border border-white/30 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  className="w-full bg-white border border-slate-300 rounded-lg px-4 py-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all"
                 >
                   <option value="openai">OpenAI</option>
                   <option value="stability">Stability AI</option>
@@ -178,45 +197,46 @@ export default function Dashboard() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-2">Prompt</label>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">Prompt</label>
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Enter your creative prompt..."
-                  className="w-full bg-white/20 rounded-lg px-4 py-3 border border-white/30 focus:outline-none focus:ring-2 focus:ring-cyan-500 min-h-[120px]"
+                  placeholder="Describe your creative vision..."
+                  className="w-full bg-white border border-slate-300 rounded-lg px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 transition-all min-h-[120px] resize-none"
                 />
               </div>
 
               <button
                 onClick={handleGenerate}
                 disabled={loading}
-                className="w-full bg-gradient-to-r from-pink-500 to-cyan-500 hover:from-pink-600 hover:to-cyan-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+                className="w-full bg-gradient-to-r from-teal-500 to-blue-500 hover:from-teal-600 hover:to-blue-600 disabled:from-slate-400 disabled:to-slate-400 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 shadow-md hover:shadow-lg"
               >
                 {loading ? (
                   <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    <Loader2 size={18} className="animate-spin" />
                     <span>Generating...</span>
                   </>
                 ) : (
                   <>
-                    <Image size={20} />
+                    <Sparkles size={18} />
                     <span>Generate & Certify</span>
                   </>
                 )}
               </button>
 
-              <div className="relative">
+              <div className="relative py-2">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-white/30"></div>
+                  <div className="w-full border-t border-slate-300"></div>
                 </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-transparent text-gray-400">or</span>
+                <div className="relative flex justify-center text-xs">
+                  <span className="px-2 bg-white text-slate-500">or import</span>
                 </div>
               </div>
 
-              <label className="w-full bg-white/10 hover:bg-white/20 border-2 border-dashed border-white/30 rounded-lg py-8 flex flex-col items-center justify-center cursor-pointer transition-all">
-                <Upload size={32} className="mb-2 text-gray-400" />
-                <span className="text-sm text-gray-400">Import existing artwork</span>
+              <label className="w-full bg-gradient-to-br from-blue-50 to-teal-50 hover:from-blue-100 hover:to-teal-100 border-2 border-dashed border-slate-300 rounded-lg py-8 flex flex-col items-center justify-center cursor-pointer transition-all group">
+                <Upload size={32} className="mb-2 text-slate-400 group-hover:text-teal-600 transition-colors" />
+                <span className="text-sm font-medium text-slate-600">Import artwork</span>
+                <span className="text-xs text-slate-500">PNG, JPG, MP3, etc.</span>
                 <input
                   type="file"
                   accept="image/*,audio/*"
@@ -226,65 +246,93 @@ export default function Dashboard() {
                     }
                   }}
                   className="hidden"
+                  disabled={loading}
                 />
               </label>
             </div>
           </div>
+        </div>
 
-          {/* Gallery */}
-          <div className="lg:col-span-2">
-            <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-              <h2 className="text-2xl font-bold mb-6">Your Certified Artworks</h2>
-              
-              {artworks.length === 0 ? (
-                <div className="text-center py-16">
-                  <AlertCircle size={48} className="mx-auto mb-4 text-gray-500" />
-                  <p className="text-gray-400">No artworks yet. Create your first certified masterpiece!</p>
+        <div className="lg:col-span-2 slide-in-from-bottom" style={{ animationDelay: '0.2s' }}>
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+            <h2 className="text-2xl font-bold text-slate-900 mb-6">Your Certified Works</h2>
+
+            {artworks.length === 0 ? (
+              <div className="text-center py-16">
+                <div className="text-slate-300 mb-4">
+                  <Image size={48} className="mx-auto" />
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {artworks.map((artwork) => (
-                    <div key={artwork.id} className="bg-white/10 rounded-xl p-4 border border-white/20 hover:border-cyan-500 transition-all">
-                      <div className="aspect-square bg-gradient-to-br from-purple-500/20 to-cyan-500/20 rounded-lg mb-4 flex items-center justify-center">
-                        {artwork.contentType === 'image' ? (
-                          <Image size={64} className="text-white/40" />
-                        ) : artwork.contentType === 'text' ? (
-                          <FileText size={64} className="text-white/40" />
-                        ) : (
-                          <Music size={64} className="text-white/40" />
-                        )}
-                      </div>
-                      
-                      <h3 className="font-semibold mb-2 truncate">{artwork.title}</h3>
-                      <p className="text-sm text-gray-400 mb-3 truncate">{artwork.prompt}</p>
-                      
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-gray-500">IPFS:</span>
-                          <span className="text-cyan-400 truncate ml-2">{artwork.ipfsHash.substring(0, 12)}...</span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-gray-500">Blockchain:</span>
-                          <span className="text-green-400 truncate ml-2">{artwork.blockchainTxHash.substring(0, 12)}...</span>
-                        </div>
-                      </div>
+                <p className="text-slate-500 font-medium">No artworks yet</p>
+                <p className="text-slate-400 text-sm">Create or import your first piece to get started</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {artworks.map((artwork, index) => (
+                  <div
+                    key={artwork.id}
+                    className="bg-gradient-to-br from-slate-50 to-blue-50 rounded-xl p-5 border border-slate-200 hover:border-teal-400 transition-all group animate-in fade-in"
+                    style={{ animationDelay: `${index * 0.05}s` }}
+                  >
+                    <div className="aspect-square bg-gradient-to-br from-teal-100 to-blue-100 rounded-lg mb-4 flex items-center justify-center relative overflow-hidden">
+                      <div className="absolute inset-0 bg-gradient-to-br from-teal-400/10 to-blue-400/10 group-hover:from-teal-400/20 group-hover:to-blue-400/20 transition-all" />
+                      {artwork.contentType === 'image' ? (
+                        <Image size={48} className="text-slate-400 relative z-10" />
+                      ) : artwork.contentType === 'text' ? (
+                        <FileText size={48} className="text-slate-400 relative z-10" />
+                      ) : (
+                        <Music size={48} className="text-slate-400 relative z-10" />
+                      )}
+                    </div>
 
-                      <div className="mt-4 flex space-x-2">
-                        <button 
-                          onClick={() => downloadCertificate(artwork.id)}
-                          className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white text-sm py-2 px-4 rounded-lg transition-all"
-                        >
-                          Download Certificate
-                        </button>
-                        <button className="bg-white/10 hover:bg-white/20 text-white text-sm py-2 px-4 rounded-lg transition-all">
-                          View
-                        </button>
+                    <h3 className="font-semibold text-slate-900 mb-1 truncate">{artwork.title}</h3>
+                    <p className="text-sm text-slate-500 mb-4 line-clamp-2">{artwork.prompt}</p>
+
+                    <div className="space-y-2 mb-4 bg-white rounded-lg p-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500 font-medium">IPFS</span>
+                        <div className="flex items-center space-x-2">
+                          <span className="font-mono text-teal-600 text-xs">{artwork.ipfsHash.substring(0, 12)}...</span>
+                          <button
+                            onClick={() => copyToClipboard(artwork.ipfsHash)}
+                            className="text-slate-400 hover:text-teal-600 transition-colors"
+                          >
+                            <Copy size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500 font-medium">Blockchain</span>
+                        <div className="flex items-center space-x-2">
+                          <span className="font-mono text-blue-600 text-xs">{artwork.blockchainTxHash.substring(0, 12)}...</span>
+                          <button
+                            onClick={() => copyToClipboard(artwork.blockchainTxHash)}
+                            className="text-slate-400 hover:text-blue-600 transition-colors"
+                          >
+                            <Copy size={14} />
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => downloadCertificate(artwork.id)}
+                        className="flex-1 bg-gradient-to-r from-teal-500 to-blue-500 hover:from-teal-600 hover:to-blue-600 text-white text-sm font-medium py-2 px-3 rounded-lg transition-all flex items-center justify-center space-x-1"
+                      >
+                        <ExternalLink size={14} />
+                        <span>Certificate</span>
+                      </button>
+                      <button
+                        onClick={() => removeArtwork(artwork.id)}
+                        className="bg-slate-100 hover:bg-red-100 text-slate-600 hover:text-red-600 text-sm font-medium py-2 px-3 rounded-lg transition-all"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
