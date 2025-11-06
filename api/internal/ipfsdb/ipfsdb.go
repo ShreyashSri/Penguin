@@ -14,11 +14,15 @@ import (
 
 // Mock interface for local development (simulates IPFS persistence)
 type IPFSDB struct {
-	store map[string]interface{}
+	store             map[string]interface{}
+	encryptedKeyStore map[string][]byte // Stores encrypted private keys by artwork ID
 }
 
 func New() *IPFSDB {
-	return &IPFSDB{store: make(map[string]interface{})}
+	return &IPFSDB{
+		store:             make(map[string]interface{}),
+		encryptedKeyStore: make(map[string][]byte),
+	}
 }
 
 func (db *IPFSDB) Save(key string, value interface{}) error {
@@ -40,11 +44,27 @@ func (db *IPFSDB) ListKeys() []string {
 	return keys
 }
 
+// SaveEncryptedPrivateKey stores an encrypted private key
+func (db *IPFSDB) SaveEncryptedPrivateKey(artworkID string, encryptedKey []byte) error {
+	db.encryptedKeyStore[artworkID] = encryptedKey
+	fmt.Printf("Saved encrypted private key for artwork: %s\n", artworkID)
+	return nil
+}
+
+// GetEncryptedPrivateKey retrieves an encrypted private key
+func (db *IPFSDB) GetEncryptedPrivateKey(artworkID string) ([]byte, error) {
+	key, ok := db.encryptedKeyStore[artworkID]
+	if !ok {
+		return nil, fmt.Errorf("encrypted key not found for artwork: %s", artworkID)
+	}
+	return key, nil
+}
+
 // FindUserByAuthenticatorID retrieves a user by their Microsoft Authenticator ID
 func (db *IPFSDB) FindUserByAuthenticatorID(authID string) (*models.User, bool) {
 	// In a real database (like Mongo), you'd run a query:
 	// db.Collection("users").FindOne(ctx, bson.M{"authenticator_id": authID})
-	
+
 	// For the mock IPFSDB, we must iterate:
 	for _, val := range db.store {
 		// Only check items that are models.User
@@ -108,6 +128,16 @@ func (s *StorageService) StoreArtwork(ctx context.Context, data []byte, metadata
 	_ = os.Getenv("POLYGON_CONTRACT_ADDRESS")
 
 	return cid, txHash, nil
+}
+
+// StoreEncryptedPrivateKey stores an encrypted private key for an artwork
+func (s *StorageService) StoreEncryptedPrivateKey(artworkID string, encryptedKey []byte) error {
+	return s.db.SaveEncryptedPrivateKey(artworkID, encryptedKey)
+}
+
+// GetEncryptedPrivateKey retrieves an encrypted private key for an artwork
+func (s *StorageService) GetEncryptedPrivateKey(artworkID string) ([]byte, error) {
+	return s.db.GetEncryptedPrivateKey(artworkID)
 }
 
 // VerifyArtwork verifies artwork from blockchain/IPFS

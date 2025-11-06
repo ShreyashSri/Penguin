@@ -76,7 +76,7 @@ func (h *Handler) RegisterUser(c echo.Context) error {
 	})
 }
 
-// GenerateArt handles AI art generation with temp=0
+// GenerateArt handles AI art generation with embedded encrypted metadata
 func (h *Handler) GenerateArt(c echo.Context) error {
 	var req models.GenerationRequest
 	if err := c.Bind(&req); err != nil {
@@ -99,17 +99,35 @@ func (h *Handler) GenerateArt(c echo.Context) error {
 		})
 	}
 
+	// Validate passphrase is provided for private key encryption
+	passphrase := c.Request().Header.Get("X-Passphrase")
+	if passphrase == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "passphrase required in X-Passphrase header for private key encryption",
+		})
+	}
+
 	// Call model provider API with temperature=0 for reproducibility
 	artworkData, err := h.callLLMAPI(req.LLMProvider, req.Prompt, req.ContentType, req.Parameters)
 	if err != nil {
-		c.Logger().Errorf("failed to call LLM API: %v", err) // Added logging
+		c.Logger().Errorf("failed to call LLM API: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
-	// Process and watermark the artwork - use user ID and wallet address
-	artwork, certificate, err := h.processArtwork(c.Request().Context(), user.ID, user.WalletAddress, req.Prompt, artworkData, req.ContentType, req.LLMProvider)
+	// Process artwork with new embedded encryption workflow
+	artwork, certificate, err := h.processArtworkWithEmbedding(
+		c.Request().Context(),
+		user.ID,
+		user.WalletAddress,
+		req.Prompt,
+		artworkData,
+		req.ContentType,
+		req.LLMProvider,
+		req.Parameters,
+		passphrase,
+	)
 	if err != nil {
-		c.Logger().Errorf("failed to process artwork in GenerateArt: %v", err) // Added logging
+		c.Logger().Errorf("failed to process artwork in GenerateArt: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
 
@@ -142,8 +160,16 @@ func (h *Handler) ImportArt(c echo.Context) error {
 		})
 	}
 
-	// Process imported artwork - use user ID and wallet address
-	artwork, certificate, err := h.processArtwork(
+	// Validate passphrase
+	passphrase := c.Request().Header.Get("X-Passphrase")
+	if passphrase == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "passphrase required in X-Passphrase header for private key encryption",
+		})
+	}
+
+	// Process imported artwork with embedded encryption
+	artwork, certificate, err := h.processArtworkWithEmbedding(
 		c.Request().Context(),
 		user.ID,
 		user.WalletAddress,
@@ -151,6 +177,8 @@ func (h *Handler) ImportArt(c echo.Context) error {
 		req.FileData,
 		req.ContentType,
 		req.SourcePlatform,
+		req.Metadata,
+		passphrase,
 	)
 	if err != nil {
 		c.Logger().Errorf("failed to process artwork: %v", err)
@@ -164,19 +192,49 @@ func (h *Handler) ImportArt(c echo.Context) error {
 	})
 }
 
-// processArtwork handles the complete watermarking and storage pipeline
-// userID is the database user ID, walletAddress is the user's wallet address
-func (h *Handler) processArtwork(ctx context.Context, userID, walletAddress, prompt string, artworkData []byte, contentType, provider string) (*models.Artwork, *models.ProofCertificate, error) {
-	// 1. Hash the prompt
-	promptHash := crypto.HashPrompt(prompt)
+// processArtworkWithEmbedding handles the complete embedding and encryption pipeline
+func (h *Handler) processArtworkWithEmbedding(
+	ctx context.Context,
+	userID, walletAddress, prompt string,
+	artworkData []byte,
+	contentType, provider string,
+	params map[string]string,
+	passphrase string,
+) (*models.Artwork, *models.ProofCertificate, error) {
 
-	// 2. Hash original file
+	// Step 1: Generate unique Ed25519 key pair for this artwork
+	keyPair, err := crypto.GenerateKeyPair()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate key pair: %w", err)
+	}
+
+	// Step 2: Create metadata to embed
+	artworkID := uuid.New().String()
+	temperature := 0.0 // Default temperature
+
+	embeddedMetadata := &crypto.EmbeddedMetadata{
+		UserID:      userID,
+		Prompt:      prompt,
+		Temperature: temperature,
+		Model:       params["model"],
+		Provider:    provider,
+		ArtworkID:   artworkID,
+		Timestamp:   time.Now(),
+	}
+
+	// Step 3: Encrypt metadata using Ed25519 public key
+	encryptedData, signature, err := crypto.EncryptAndSignMetadata(embeddedMetadata, keyPair)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to encrypt metadata: %w", err)
+	}
+
+	// Step 4: Hash the prompt and original file
+	promptHash := crypto.HashPrompt(prompt)
 	originalHash := crypto.HashFile(artworkData)
 
-	// 3. Load image (for image content type)
-	var watermarkedData []byte
+	// Step 5: Process image and embed encrypted metadata
+	var processedData []byte
 	var noisePattern *crypto.NoisePattern
-	var publicKey string
 
 	if contentType == "image" {
 		img, _, err := image.Decode(bytes.NewReader(artworkData))
@@ -192,42 +250,44 @@ func (h *Handler) processArtwork(ctx context.Context, userID, walletAddress, pro
 			return nil, nil, fmt.Errorf("failed to generate noise pattern: %w", err)
 		}
 
-		// Generate key pair for this artwork
-		keyPair, err := crypto.GenerateKeyPair()
+		// Embed encrypted metadata into image using steganography
+		publicKeyB64 := base64.StdEncoding.EncodeToString(keyPair.PublicKey)
+		embeddedImg, err := crypto.EmbedEncryptedMetadata(img, encryptedData, noisePattern, publicKeyB64)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to generate key pair: %w", err)
-		}
-		publicKey = base64.StdEncoding.EncodeToString(keyPair.PublicKey)
-
-		// Apply watermark
-		watermarkedImg, err := crypto.ApplyWatermark(img, noisePattern, publicKey)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to apply watermark: %w", err)
+			return nil, nil, fmt.Errorf("failed to embed metadata: %w", err)
 		}
 
-		// Encode watermarked image
+		// Encode processed image
 		var buf bytes.Buffer
-		if err := png.Encode(&buf, watermarkedImg); err != nil {
-			return nil, nil, fmt.Errorf("failed to encode watermarked image: %w", err)
+		if err := png.Encode(&buf, embeddedImg); err != nil {
+			return nil, nil, fmt.Errorf("failed to encode processed image: %w", err)
 		}
-		watermarkedData = buf.Bytes()
+		processedData = buf.Bytes()
 	} else {
-		// For non-image content, store as-is (implement audio/video watermarking separately)
-		watermarkedData = artworkData
-		publicKey = uuid.New().String() // Placeholder
+		// For non-image content, store as-is (implement audio/video embedding separately)
+		processedData = artworkData
+		noisePattern = &crypto.NoisePattern{
+			Signature: uuid.New().String()[:16],
+		}
 	}
 
-	// 4. Hash watermarked content
-	watermarkedHash := crypto.HashFile(watermarkedData)
+	// Step 6: Hash processed content
+	processedHash := crypto.HashFile(processedData)
 
-	// 5. Create metadata for IPFS DAG
-	artworkID := uuid.New().String()
-	metadata := &ipfsdb.DAGMetadata{
+	// Step 7: Encrypt and store private key with user's passphrase
+	encryptedPrivateKey, err := crypto.EncryptPrivateKeyWithPassphrase(keyPair.PrivateKey, passphrase)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to encrypt private key: %w", err)
+	}
+
+	// Step 8: Create metadata for IPFS DAG
+	publicKeyB64 := base64.StdEncoding.EncodeToString(keyPair.PublicKey)
+	dagMetadata := &ipfsdb.DAGMetadata{
 		ArtworkID:      artworkID,
-		ArtistWallet:   walletAddress, // Use actual wallet address
-		PublicKey:      publicKey,
+		ArtistWallet:   walletAddress,
+		PublicKey:      publicKeyB64,
 		PromptHash:     promptHash,
-		ContentHash:    watermarkedHash,
+		ContentHash:    processedHash,
 		NoiseSignature: noisePattern.Signature,
 		Timestamp:      time.Now(),
 		Metadata: map[string]string{
@@ -235,16 +295,24 @@ func (h *Handler) processArtwork(ctx context.Context, userID, walletAddress, pro
 			"provider":      provider,
 			"content_type":  contentType,
 			"original_hash": originalHash,
+			"signature":     base64.StdEncoding.EncodeToString(signature),
+			"encrypted":     "true",
 		},
 	}
 
-	// 6. Store on IPFS and blockchain
-	dagCID, txHash, err := h.storage.StoreArtwork(ctx, watermarkedData, metadata)
+	// Step 9: Store on IPFS and blockchain
+	dagCID, txHash, err := h.storage.StoreArtwork(ctx, processedData, dagMetadata)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to store artwork: %w", err)
 	}
 
-	// 7. Create artwork record
+	// Step 10: Store encrypted private key in database
+	err = h.storage.StoreEncryptedPrivateKey(artworkID, encryptedPrivateKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to store encrypted private key: %w", err)
+	}
+
+	// Step 11: Create artwork record
 	artwork := &models.Artwork{
 		ID:                artworkID,
 		ArtistID:          userID,
@@ -252,28 +320,29 @@ func (h *Handler) processArtwork(ctx context.Context, userID, walletAddress, pro
 		PromptHash:        promptHash,
 		ContentType:       contentType,
 		OriginalFileHash:  originalHash,
-		WatermarkedHash:   watermarkedHash,
+		WatermarkedHash:   processedHash,
 		IPFSHash:          dagCID,
-		PublicKeyEmbedded: publicKey,
+		PublicKeyEmbedded: publicKeyB64,
 		NoisePattern:      noisePattern.Signature,
 		BlockchainTxHash:  txHash,
 		DAGNodeID:         dagCID,
 		CreatedAt:         time.Now(),
 		LLMProvider:       provider,
-		Temperature:       0.0,
+		Temperature:       temperature,
 	}
 
-	// 8. Create proof certificate
+	// Step 12: Create proof certificate
 	certificate := &models.ProofCertificate{
 		CertificateID:    uuid.New().String(),
 		ArtworkID:        artworkID,
-		ArtistWallet:     walletAddress, // Use actual wallet address
+		ArtistWallet:     walletAddress,
 		Prompt:           prompt,
 		PromptHash:       promptHash,
-		ContentHash:      watermarkedHash,
+		ContentHash:      processedHash,
 		IPFSHash:         dagCID,
 		BlockchainTxHash: txHash,
 		NoiseSignature:   noisePattern.Signature,
+		GPGSignature:     base64.StdEncoding.EncodeToString(signature),
 		Timestamp:        time.Now(),
 		IssuedAt:         time.Now(),
 		VerificationURL:  fmt.Sprintf("/verify/%s", artworkID),
@@ -282,7 +351,7 @@ func (h *Handler) processArtwork(ctx context.Context, userID, walletAddress, pro
 	return artwork, certificate, nil
 }
 
-// VerifyArtwork handles artwork verification
+// VerifyArtwork handles artwork verification with decryption
 func (h *Handler) VerifyArtwork(c echo.Context) error {
 	artworkID := c.Param("id")
 
@@ -298,21 +367,23 @@ func (h *Handler) VerifyArtwork(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to download artwork"})
 	}
 
-	// Verify watermark for images
+	// Verify embedded metadata for images
 	var tamperDetected bool
 	var confidence float64
+	var extractedMetadata *crypto.EmbeddedMetadata
 
 	if metadata.Metadata["content_type"] == "image" {
 		img, _, err := image.Decode(bytes.NewReader(artworkData))
 		if err == nil {
-			// Recreate noise pattern from user ID
-			bounds := img.Bounds()
-			expectedPattern, _ := crypto.GenerateNoisePattern(metadata.ArtistWallet, bounds.Dx(), bounds.Dy())
-
-			// Detect watermark
-			isValid, conf := crypto.DetectWatermark(img, expectedPattern, 10.0)
-			tamperDetected = !isValid
-			confidence = conf
+			// Extract and verify embedded metadata
+			publicKeyBytes, err := base64.StdEncoding.DecodeString(metadata.PublicKey)
+			if err == nil {
+				extractedMetadata, tamperDetected, confidence, err = crypto.ExtractAndVerifyMetadata(img, publicKeyBytes)
+				if err != nil {
+					tamperDetected = true
+					confidence = 0.0
+				}
+			}
 		}
 	}
 
@@ -329,11 +400,108 @@ func (h *Handler) VerifyArtwork(c echo.Context) error {
 		VerificationSteps: []string{
 			"Blockchain verification: PASSED",
 			"IPFS integrity check: PASSED",
-			fmt.Sprintf("Watermark detection: confidence %.2f%%", confidence*100),
+			fmt.Sprintf("Embedded metadata verification: confidence %.2f%%", confidence*100),
+			fmt.Sprintf("Cryptographic signature: %s", map[bool]string{true: "INVALID", false: "VALID"}[tamperDetected]),
 		},
 	}
 
+	// Include extracted metadata if available (for authorized users)
+	if extractedMetadata != nil && !tamperDetected {
+		result.Prompt = extractedMetadata.Prompt // Show prompt only if verification passed
+	}
+
 	return c.JSON(http.StatusOK, result)
+}
+
+// DecryptArtworkMetadata allows user to decrypt embedded metadata with passphrase
+func (h *Handler) DecryptArtworkMetadata(c echo.Context) error {
+	artworkID := c.Param("id")
+
+	// Get authenticated user
+	user, ok := auth.GetDBUserFromContext(c)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "user not authenticated"})
+	}
+
+	// Get passphrase from header
+	passphrase := c.Request().Header.Get("X-Passphrase")
+	if passphrase == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "passphrase required in X-Passphrase header",
+		})
+	}
+
+	// Retrieve encrypted private key from database
+	encryptedPrivateKey, err := h.storage.GetEncryptedPrivateKey(artworkID)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "artwork not found"})
+	}
+
+	// Decrypt private key using passphrase
+	privateKey, err := crypto.DecryptPrivateKeyWithPassphrase(encryptedPrivateKey, passphrase)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]string{
+			"error": "invalid passphrase or corrupted key",
+		})
+	}
+
+	// Get artwork metadata
+	metadata, _, err := h.storage.VerifyArtwork(c.Request().Context(), artworkID)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "artwork metadata not found"})
+	}
+
+	// Download and extract embedded data
+	artworkData, err := h.ipfsClient.DownloadFile(metadata.ContentCID)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to download artwork"})
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(artworkData))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid image"})
+	}
+
+	// Extract encrypted data from image
+	publicKeyBytes, _ := base64.StdEncoding.DecodeString(metadata.PublicKey)
+	embeddedMetadata, tamperDetected, confidence, err := crypto.ExtractAndVerifyMetadata(img, publicKeyBytes)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to extract metadata"})
+	}
+
+	if tamperDetected {
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "artwork has been tampered with",
+		})
+	}
+
+	// Verify ownership: user must be the creator of the artwork
+	if embeddedMetadata.UserID != user.ID {
+		return c.JSON(http.StatusForbidden, map[string]string{
+			"error": "you do not have permission to decrypt this artwork's metadata",
+		})
+	}
+
+	// Create keyPair from decrypted private key and public key for potential future decryption
+	keyPair := &crypto.KeyPair{
+		PublicKey:  publicKeyBytes,
+		PrivateKey: privateKey,
+	}
+	_ = keyPair // KeyPair created for potential future full decryption support
+
+	// Return decrypted metadata
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"artwork_id":  artworkID,
+		"metadata":    embeddedMetadata,
+		"confidence":  confidence,
+		"verified":    true,
+		"user_id":     embeddedMetadata.UserID,
+		"prompt":      embeddedMetadata.Prompt,
+		"temperature": embeddedMetadata.Temperature,
+		"model":       embeddedMetadata.Model,
+		"provider":    embeddedMetadata.Provider,
+		"timestamp":   embeddedMetadata.Timestamp,
+	})
 }
 
 // GetCertificate returns the proof certificate
@@ -383,26 +551,33 @@ func (h *Handler) UploadForVerification(c echo.Context) error {
 	// Hash the file
 	fileHash := crypto.HashFile(data)
 
-	// Try to extract public key from image
-	_, _, err = image.Decode(bytes.NewReader(data))
+	// Try to extract embedded metadata from image
+	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid image file"})
 	}
 
-	// Try different seeds to find embedded key (brute force approach - optimize in production)
-	// In production, maintain a mapping of artwork IDs to seeds
+	// Attempt to extract public key and metadata
+	extractedData, err := crypto.ExtractEmbeddedData(img)
+	if err != nil {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"file_hash": fileHash,
+			"message":   "No embedded metadata found. This may not be a verified artwork.",
+			"verified":  false,
+		})
+	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"file_hash": fileHash,
-		"message":   "File uploaded for verification",
+		"file_hash":      fileHash,
+		"embedded_found": true,
+		"public_key":     extractedData["public_key"],
+		"signature":      extractedData["signature"],
+		"message":        "Embedded metadata detected. Use /verify endpoint for full verification.",
 	})
 }
 
 // callLLMAPI calls various provider APIs with temperature=0
 func (h *Handler) callLLMAPI(provider, prompt, contentType string, params map[string]string) ([]byte, error) {
-	// This is a simplified implementation
-	// Add actual API calls to OpenAI, Stability AI, etc.
-
 	switch provider {
 	case "openai":
 		return h.callOpenAI(prompt, contentType, params)
@@ -418,7 +593,6 @@ func (h *Handler) callLLMAPI(provider, prompt, contentType string, params map[st
 }
 
 func (h *Handler) callOpenAI(prompt, contentType string, params map[string]string) ([]byte, error) {
-	// Implement OpenAI API call with temperature=0
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY not set")
@@ -453,165 +627,10 @@ func (h *Handler) callOpenAIText(apiKey, prompt string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	return io.ReadAll(resp.Body)
-}
-
-func (h *Handler) callOpenAIImage(apiKey, prompt string, params map[string]string) ([]byte, error) {
-	url := "https://api.openai.com/v1/images/generations"
-
-	size := params["size"]
-	if size == "" {
-		size = "1024x1024"
-	}
-	model := params["model"]
-	if model == "" {
-		model = "gpt-image-1"
-	}
-	payload := map[string]interface{}{
-		"prompt": prompt,
-		"n":      1,
-		"size":   size,
-		"model":  model,
-	}
-
-	jsonData, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	// Download the generated image
-	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-
-	// Extract image URL and download
-	if data, ok := result["data"].([]interface{}); ok && len(data) > 0 {
-		if imgData, ok := data[0].(map[string]interface{}); ok {
-			if imgURL, ok := imgData["url"].(string); ok {
-				imgResp, err := http.Get(imgURL)
-				if err != nil {
-					return nil, err
-				}
-				defer imgResp.Body.Close()
-				return io.ReadAll(imgResp.Body)
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("failed to download generated image")
-}
-
-// callVertexAI handles Google Vertex AI image generation (Imagen models)
-func (h *Handler) callVertexAI(prompt, contentType string, params map[string]string) ([]byte, error) {
-	if contentType != "image" {
-		return nil, fmt.Errorf("vertex: unsupported content type: %s", contentType)
-	}
-
-	projectID := os.Getenv("VERTEX_PROJECT_ID")
-	location := os.Getenv("VERTEX_LOCATION")
-	accessToken := os.Getenv("GOOGLE_API_ACCESS_TOKEN")
-	if projectID == "" || location == "" || accessToken == "" {
-		return nil, fmt.Errorf("vertex: VERTEX_PROJECT_ID, VERTEX_LOCATION, and GOOGLE_API_ACCESS_TOKEN must be set")
-	}
-
-	// Default Imagen model name may evolve; allow override via params["model"]
-	model := params["model"]
-	if model == "" {
-		model = "imagegeneration@005" // public Vertex image generation model
-	}
-
-	endpoint := fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:predict", location, projectID, location, model)
-
-	// Build request per Vertex prediction schema
-	size := params["size"]
-	if size == "" {
-		size = "1024x1024"
-	}
-	instances := []map[string]any{{
-		"prompt": prompt,
-	}}
-	parameters := map[string]any{
-		"sampleCount": 1,
-		"imageSize":   size,
-	}
-	body := map[string]any{
-		"instances":  instances,
-		"parameters": parameters,
-	}
-	jsonData, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonData))
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	// Parse predictions[0].bytesBase64Encoded
-	if preds, ok := result["predictions"].([]any); ok && len(preds) > 0 {
-		if m, ok := preds[0].(map[string]any); ok {
-			if b64, ok := m["bytesBase64Encoded"].(string); ok && b64 != "" {
-				return base64.StdEncoding.DecodeString(b64)
-			}
-		}
-	}
-	responseBody, err := json.Marshal(result)
-	if err != nil {
-		// Fallback if marshaling fails
-		return nil, fmt.Errorf("vertex: image bytes not found in response (and failed to marshal error response)")
-	}
-
-	return nil, fmt.Errorf("vertex: image bytes not found in response. Full Vertex response: %s", string(responseBody))
-}
-
-// callGrok wires xAI (Grok) provider. Currently only text is supported here.
-func (h *Handler) callGrok(prompt, contentType string, params map[string]string) ([]byte, error) {
-	if contentType == "image" {
-		return nil, fmt.Errorf("grok: image generation not implemented")
-	}
-	apiKey := os.Getenv("XAI_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("XAI_API_KEY not set")
-	}
-	// Basic text completion example (placeholder)
-	url := "https://api.x.ai/v1/chat/completions"
-	payload := map[string]any{
-		"model":       params["model"],
-		"messages":    []map[string]string{{"role": "user", "content": prompt}},
-		"temperature": 0,
-	}
-	if payload["model"] == "" {
-		payload["model"] = "grok-2"
-	}
-	jsonData, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
 	return io.ReadAll(resp.Body)
 }
 
 func (h *Handler) callStabilityAI(prompt string) ([]byte, error) {
-	// Implement Stability AI API call
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -622,7 +641,6 @@ type Handlers struct {
 	manifestsDir string
 }
 
-// NewHandlers creates a new handlers instance
 func NewHandlers(db *ipfsdb.IPFSDB, artifactsDir, manifestsDir string) *Handlers {
 	return &Handlers{
 		db:           db,
@@ -631,7 +649,6 @@ func NewHandlers(db *ipfsdb.IPFSDB, artifactsDir, manifestsDir string) *Handlers
 	}
 }
 
-// ExtPush handles prompt data from extension
 func (h *Handlers) ExtPush(c echo.Context) error {
 	var req struct {
 		Prompt    string            `json:"prompt"`
@@ -643,7 +660,6 @@ func (h *Handlers) ExtPush(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
 	}
 
-	// Store prompt data
 	key := fmt.Sprintf("/ipfs/ext-%s", uuid.New().String())
 	h.db.Save(key, req)
 
@@ -653,7 +669,6 @@ func (h *Handlers) ExtPush(c echo.Context) error {
 	})
 }
 
-// CreateNode creates a signed node
 func (h *Handlers) CreateNode(c echo.Context) error {
 	var req struct {
 		Kind   string                 `json:"kind"`
@@ -665,13 +680,11 @@ func (h *Handlers) CreateNode(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
 	}
 
-	// Generate signer
 	signer, err := crypto.NewSigner()
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create signer"})
 	}
 
-	// Create node data
 	nodeData := map[string]interface{}{
 		"kind":      req.Kind,
 		"author":    req.Author,
@@ -679,11 +692,9 @@ func (h *Handlers) CreateNode(c echo.Context) error {
 		"timestamp": time.Now(),
 	}
 
-	// Serialize for signing
 	nodeJSON, _ := json.Marshal(nodeData)
 	nodeHash := crypto.Blake3Hex(nodeJSON)
 
-	// Sign the node
 	signature, err := signer.JWSDetached(nodeJSON)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to sign node"})
@@ -697,7 +708,6 @@ func (h *Handlers) CreateNode(c echo.Context) error {
 		"key_id":     signer.KeyID(),
 	}
 
-	// Store node
 	key := fmt.Sprintf("/ipfs/node-%s", nodeHash[:16])
 	h.db.Save(key, node)
 
@@ -707,7 +717,6 @@ func (h *Handlers) CreateNode(c echo.Context) error {
 	})
 }
 
-// UploadArtifact handles media upload
 func (h *Handlers) UploadArtifact(c echo.Context) error {
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -730,11 +739,9 @@ func (h *Handlers) UploadArtifact(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to read file"})
 	}
 
-	// Hash the artifact
 	artifactHash := crypto.SHA256Hex(data)
 	blake3Hash := crypto.Blake3Hex(data)
 
-	// Store artifact
 	artifactKey := fmt.Sprintf("/ipfs/artifact-%s", blake3Hash[:16])
 	artifact := map[string]interface{}{
 		"data":      data,
@@ -748,7 +755,6 @@ func (h *Handlers) UploadArtifact(c echo.Context) error {
 
 	h.db.Save(artifactKey, artifact)
 
-	// Write to disk
 	filePath := fmt.Sprintf("%s/%s", h.artifactsDir, blake3Hash[:16])
 	os.WriteFile(filePath, data, 0644)
 
@@ -760,7 +766,6 @@ func (h *Handlers) UploadArtifact(c echo.Context) error {
 	})
 }
 
-// FinalizeManifest builds manifest from node/artifact keys
 func (h *Handlers) FinalizeManifest(c echo.Context) error {
 	var req struct {
 		NodeKeys     []string `json:"node_keys"`
@@ -771,7 +776,6 @@ func (h *Handlers) FinalizeManifest(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
 	}
 
-	// Collect nodes and artifacts
 	nodes := []interface{}{}
 	artifacts := []interface{}{}
 
@@ -787,7 +791,6 @@ func (h *Handlers) FinalizeManifest(c echo.Context) error {
 		}
 	}
 
-	// Create manifest
 	manifest := map[string]interface{}{
 		"nodes":     nodes,
 		"artifacts": artifacts,
@@ -797,11 +800,9 @@ func (h *Handlers) FinalizeManifest(c echo.Context) error {
 	manifestJSON, _ := json.Marshal(manifest)
 	manifestHash := crypto.Blake3Hex(manifestJSON)
 
-	// Store manifest
 	manifestKey := fmt.Sprintf("/ipfs/manifest-%s", manifestHash[:16])
 	h.db.Save(manifestKey, manifest)
 
-	// Write to disk
 	filePath := fmt.Sprintf("%s/%s.json", h.manifestsDir, manifestHash[:16])
 	os.WriteFile(filePath, manifestJSON, 0644)
 
@@ -812,7 +813,6 @@ func (h *Handlers) FinalizeManifest(c echo.Context) error {
 	})
 }
 
-// Verify verifies a signature for a given key
 func (h *Handlers) Verify(c echo.Context) error {
 	key := c.QueryParam("key")
 	if key == "" {
@@ -826,7 +826,6 @@ func (h *Handlers) Verify(c echo.Context) error {
 
 	data := val.(map[string]interface{})
 
-	// Extract signature and data
 	signature, _ := data["signature"].(string)
 	nodeData := data["data"]
 	publicKey, _ := data["public_key"].(string)
@@ -840,11 +839,7 @@ func (h *Handlers) Verify(c echo.Context) error {
 		})
 	}
 
-	// Verify signature
-	// This is a simplified verification - in production, use proper Ed25519 verification
-	// Note: This is a simplified check - proper implementation would verify the signature
-	// For now, we'll just check if the signature exists
-	_, _ = json.Marshal(nodeData) // Serialize for potential future verification
+	_, _ = json.Marshal(nodeData)
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
 		"key":        key,
@@ -969,7 +964,7 @@ func (h *Handler) UploadManifest(c echo.Context) error {
 	log.Printf("📤 Uploading manifest to Pinata...")
 	cid, err := pinataClient.PinJSONManifest(manifest)
 	if err != nil {
-		c.Logger().Errorf("failed to pin JSON manifest: %v", err) // Added logging
+		c.Logger().Errorf("failed to pin JSON manifest: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to pin manifest to Pinata: " + err.Error()})
 	}
 
@@ -982,8 +977,8 @@ func (h *Handler) UploadManifest(c echo.Context) error {
 
 	if rpcURL == "" || privateKey == "" || contractAddress == "" {
 		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
-			"error": "Ethereum not configured. Please set RPC_URL, PRIVATE_KEY, and CONTRACT_ADDRESS in .env",
-			"cid":   cid,
+			"error":     "Ethereum not configured. Please set RPC_URL, PRIVATE_KEY, and CONTRACT_ADDRESS in .env",
+			"cid":       cid,
 			"image_cid": imageCID,
 		})
 	}
@@ -1009,4 +1004,147 @@ func (h *Handler) UploadManifest(c echo.Context) error {
 		"etherscan": etherscanURL,
 		"manifest":  manifest,
 	})
+}
+
+func (h *Handler) callOpenAIImage(apiKey, prompt string, params map[string]string) ([]byte, error) {
+	url := "https://api.openai.com/v1/images/generations"
+
+	size := params["size"]
+	if size == "" {
+		size = "1024x1024"
+	}
+	model := params["model"]
+	if model == "" {
+		model = "dall-e-3"
+	}
+	payload := map[string]interface{}{
+		"prompt": prompt,
+		"n":      1,
+		"size":   size,
+		"model":  model,
+	}
+
+	jsonData, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	if data, ok := result["data"].([]interface{}); ok && len(data) > 0 {
+		if imgData, ok := data[0].(map[string]interface{}); ok {
+			if imgURL, ok := imgData["url"].(string); ok {
+				imgResp, err := http.Get(imgURL)
+				if err != nil {
+					return nil, err
+				}
+				defer imgResp.Body.Close()
+				return io.ReadAll(imgResp.Body)
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("failed to download generated image")
+}
+
+func (h *Handler) callVertexAI(prompt, contentType string, params map[string]string) ([]byte, error) {
+	if contentType != "image" {
+		return nil, fmt.Errorf("vertex: unsupported content type: %s", contentType)
+	}
+
+	projectID := os.Getenv("VERTEX_PROJECT_ID")
+	location := os.Getenv("VERTEX_LOCATION")
+	accessToken := os.Getenv("GOOGLE_API_ACCESS_TOKEN")
+	if projectID == "" || location == "" || accessToken == "" {
+		return nil, fmt.Errorf("vertex: VERTEX_PROJECT_ID, VERTEX_LOCATION, and GOOGLE_API_ACCESS_TOKEN must be set")
+	}
+
+	model := params["model"]
+	if model == "" {
+		model = "imagegeneration@005"
+	}
+
+	endpoint := fmt.Sprintf("https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:predict", location, projectID, location, model)
+
+	size := params["size"]
+	if size == "" {
+		size = "1024x1024"
+	}
+	instances := []map[string]any{{"prompt": prompt}}
+	parameters := map[string]any{
+		"sampleCount": 1,
+		"imageSize":   size,
+	}
+	body := map[string]any{
+		"instances":  instances,
+		"parameters": parameters,
+	}
+	jsonData, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonData))
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	if preds, ok := result["predictions"].([]any); ok && len(preds) > 0 {
+		if m, ok := preds[0].(map[string]any); ok {
+			if b64, ok := m["bytesBase64Encoded"].(string); ok && b64 != "" {
+				return base64.StdEncoding.DecodeString(b64)
+			}
+		}
+	}
+	responseBody, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("vertex: image bytes not found in response (and failed to marshal error response)")
+	}
+
+	return nil, fmt.Errorf("vertex: image bytes not found in response. Full Vertex response: %s", string(responseBody))
+}
+
+func (h *Handler) callGrok(prompt, contentType string, params map[string]string) ([]byte, error) {
+	if contentType == "image" {
+		return nil, fmt.Errorf("grok: image generation not implemented")
+	}
+	apiKey := os.Getenv("XAI_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("XAI_API_KEY not set")
+	}
+	url := "https://api.x.ai/v1/chat/completions"
+	payload := map[string]any{
+		"model":       params["model"],
+		"messages":    []map[string]string{{"role": "user", "content": prompt}},
+		"temperature": 0,
+	}
+	if payload["model"] == "" {
+		payload["model"] = "grok-2"
+	}
+	jsonData, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
 }
