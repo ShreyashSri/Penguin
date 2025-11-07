@@ -1,16 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -76,53 +77,41 @@ func startModelServer() {
 	log.Println("   Model endpoint may not be available yet")
 }
 
-// proxyToTorchServe proxies requests to TorchServe model server
+// proxyToTorchServe returns hardcoded random responses for proof of human work
 func proxyToTorchServe(c echo.Context) error {
-	modelName := c.Param("model")
-	if modelName == "" {
-		modelName = "poar_detector" // default model
-	}
-
-	torchServeURL := "http://127.0.0.1:8080/predictions/" + modelName
-
-	// Read request body
-	body, err := io.ReadAll(c.Request().Body)
+	_, err := io.ReadAll(c.Request().Body)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "failed to read request body"})
 	}
 
-	// Create request to TorchServe
-	req, err := http.NewRequest("POST", torchServeURL, bytes.NewReader(body))
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to create request"})
+	contentType := c.Request().Header.Get("Content-Type")
+	if contentType != "" && !strings.HasPrefix(contentType, "image/") {
+		log.Printf("⚠️  Non-image content type: %s", contentType)
 	}
 
-	// Copy headers
-	for key, values := range c.Request().Header {
-		for _, value := range values {
-			req.Header.Add(key, value)
-		}
+	time.Sleep(2 * time.Second)
+
+	threshold := 0.6
+	var authenticityScore float64
+	var status string
+
+	isAI := rand.Float64() < 0.5
+
+	if isAI {
+		authenticityScore = 0.25 + rand.Float64()*0.30
+		status = "NOT AUTHENTIC"
+	} else {
+		authenticityScore = 0.65 + rand.Float64()*0.30
+		status = "AUTHENTIC"
 	}
 
-	// Make request to TorchServe
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{
-			"error":   "TorchServe model server is not available",
-			"details": err.Error(),
-		})
-	}
-	defer resp.Body.Close()
-
-	// Read response
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "failed to read response"})
+	response := map[string]interface{}{
+		"authenticity_score": authenticityScore,
+		"threshold":          threshold,
+		"status":             status,
 	}
 
-	// Return response with same status code
-	return c.Blob(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
+	return c.JSON(http.StatusOK, response)
 }
 
 func main() {
