@@ -2,140 +2,138 @@ import { useState, useRef } from 'react'
 import Topbar from '../components/Topbar'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { Upload, X, Image as ImageIcon, CheckCircle2, XCircle, AlertCircle, User, Bot } from 'lucide-react'
+import { CheckCircle2, XCircle, User, Bot, Trophy, RotateCcw } from 'lucide-react'
 
-type Stage = 'ai-upload' | 'ai-verify' | 'human-upload' | 'human-verify' | 'complete'
+type GameStage = 'start' | 'playing' | 'complete'
+type ImageType = 'ai' | 'human'
+type RoundResult = {
+  round: number
+  correct: boolean
+  userChoice: ImageType
+  actualType: ImageType
+}
+
+// Game pattern: AI, Human, Human, AI
+const GAME_PATTERN: ImageType[] = ['ai', 'human', 'human', 'ai']
 
 export default function ProofOfHumanWork() {
-  const [stage, setStage] = useState<Stage>('ai-upload')
-  const [aiImage, setAiImage] = useState<File | null>(null)
-  const [aiPreview, setAiPreview] = useState<string | null>(null)
-  const [humanImage, setHumanImage] = useState<File | null>(null)
-  const [humanPreview, setHumanPreview] = useState<string | null>(null)
-  const [aiVerification, setAiVerification] = useState<'ai' | 'human' | null>(null)
-  const [humanVerification, setHumanVerification] = useState<'ai' | 'human' | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const aiFileInputRef = useRef<HTMLInputElement>(null)
-  const humanFileInputRef = useRef<HTMLInputElement>(null)
+  const [gameStage, setGameStage] = useState<GameStage>('start')
+  const [currentRound, setCurrentRound] = useState(0)
+  const [roundResults, setRoundResults] = useState<RoundResult[]>([])
+  const [currentImage, setCurrentImage] = useState<string | null>(null)
+  const [userChoice, setUserChoice] = useState<ImageType | null>(null)
+  const [showResult, setShowResult] = useState(false)
+  const [score, setScore] = useState(0)
+  const [images, setImages] = useState<{ url: string; type: ImageType }[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const imagesRef = useRef<{ url: string; type: ImageType }[]>([])
 
-  const handleAiFileSelect = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      alert('Please select an image file')
+  // Load images from uploaded files or use placeholder
+  const handleImageUpload = (files: FileList) => {
+    const fileArray = Array.from(files).filter(file => file.type.startsWith('image/'))
+    
+    // We need at least 4 images
+    if (fileArray.length < 4) {
+      alert('Please upload at least 4 images to play the game')
       return
     }
-    setAiImage(file)
-    
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setAiPreview(reader.result as string)
-      // Auto-advance to verification stage after preview is loaded
-      setTimeout(() => setStage('ai-verify'), 300)
-    }
-    reader.readAsDataURL(file)
+
+    const imagePromises = fileArray.slice(0, 4).map((file, index) => {
+      return new Promise<{ url: string; type: ImageType }>((resolve) => {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          resolve({
+            url: reader.result as string,
+            type: GAME_PATTERN[index] as ImageType
+          })
+        }
+        reader.readAsDataURL(file)
+      })
+    })
+
+    Promise.all(imagePromises).then((loadedImages) => {
+      imagesRef.current = loadedImages
+      setImages(loadedImages)
+      startGame(loadedImages)
+    })
   }
 
-  const handleHumanFileSelect = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      alert('Please select an image file')
+  const startGame = (gameImages: { url: string; type: ImageType }[]) => {
+    imagesRef.current = gameImages
+    setImages(gameImages)
+    setGameStage('playing')
+    setCurrentRound(0)
+    setRoundResults([])
+    setScore(0)
+    loadRound(0, gameImages)
+  }
+
+  const loadRound = (round: number, gameImages: { url: string; type: ImageType }[]) => {
+    if (round >= GAME_PATTERN.length) {
+      setGameStage('complete')
       return
     }
-    setHumanImage(file)
     
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setHumanPreview(reader.result as string)
-      // Auto-advance to verification stage after preview is loaded
-      setTimeout(() => setStage('human-verify'), 300)
-    }
-    reader.readAsDataURL(file)
+    setCurrentRound(round)
+    setCurrentImage(gameImages[round].url)
+    setUserChoice(null)
+    setShowResult(false)
   }
 
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'ai' | 'human') => {
-    const file = e.target.files?.[0]
-    if (file) {
-      if (type === 'ai') {
-        handleAiFileSelect(file)
+  const handleUserChoice = (choice: ImageType) => {
+    if (userChoice !== null) return // Already answered
+    
+    const round = currentRound
+    const actualType = GAME_PATTERN[round]
+    const correct = choice === actualType
+    
+    setUserChoice(choice)
+    setShowResult(true)
+    
+    if (correct) {
+      setScore(prev => prev + 1)
+    }
+    
+    const result: RoundResult = {
+      round: round + 1,
+      correct,
+      userChoice: choice,
+      actualType
+    }
+    
+    setRoundResults(prev => [...prev, result])
+    
+    // Move to next round after 2 seconds
+    setTimeout(() => {
+      const nextRound = round + 1
+      if (nextRound < GAME_PATTERN.length) {
+        loadRound(nextRound, imagesRef.current)
       } else {
-        handleHumanFileSelect(file)
+        setGameStage('complete')
       }
-    }
-  }
-
-  const handleDrop = (e: React.DragEvent, type: 'ai' | 'human') => {
-    e.preventDefault()
-    setIsDragging(false)
-    const file = e.dataTransfer.files[0]
-    if (file) {
-      if (type === 'ai') {
-        handleAiFileSelect(file)
-      } else {
-        handleHumanFileSelect(file)
-      }
-    }
-  }
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(true)
-  }
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault()
-    setIsDragging(false)
-  }
-
-  const handleRemoveAiFile = () => {
-    setAiImage(null)
-    setAiPreview(null)
-    setAiVerification(null)
-    if (aiFileInputRef.current) {
-      aiFileInputRef.current.value = ''
-    }
-  }
-
-  const handleRemoveHumanFile = () => {
-    setHumanImage(null)
-    setHumanPreview(null)
-    setHumanVerification(null)
-    if (humanFileInputRef.current) {
-      humanFileInputRef.current.value = ''
-    }
-  }
-
-  const handleAiVerification = (choice: 'ai' | 'human') => {
-    setAiVerification(choice)
-    // For now, hardcoded: AI images should be identified as 'ai'
-    if (choice === 'ai') {
-      setTimeout(() => {
-        setStage('human-upload')
-      }, 1500)
-    } else {
-      // Show error but allow retry
-      alert('Incorrect! This is an AI-generated image. Please select "AI Generated".')
-    }
-  }
-
-  const handleHumanVerification = (choice: 'ai' | 'human') => {
-    setHumanVerification(choice)
-    // For now, hardcoded: Human photos should be identified as 'human'
-    if (choice === 'human') {
-      setTimeout(() => {
-        setStage('complete')
-      }, 1500)
-    } else {
-      // Show error but allow retry
-      alert('Incorrect! This is a human-generated photo. Please select "Human Generated".')
-    }
+    }, 2000)
   }
 
   const handleReset = () => {
-    setStage('ai-upload')
-    setAiImage(null)
-    setAiPreview(null)
-    setHumanImage(null)
-    setHumanPreview(null)
-    setAiVerification(null)
-    setHumanVerification(null)
+    setGameStage('start')
+    setCurrentRound(0)
+    setRoundResults([])
+    setCurrentImage(null)
+    setUserChoice(null)
+    setShowResult(false)
+    setScore(0)
+    setImages([])
+    imagesRef.current = []
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files && files.length > 0) {
+      handleImageUpload(files)
+    }
   }
 
   return (
@@ -146,108 +144,108 @@ export default function ProofOfHumanWork() {
           Proof of Human Work
         </h1>
         <p className="text-center text-gray-400 mb-8">
-          Demonstrate your ability to distinguish AI-generated content from human-created work
+          Test your ability to distinguish AI-generated content from human-created work
         </p>
 
-        {/* Progress Indicator */}
-        <div className="flex items-center justify-center mb-8">
-          <div className="flex items-center space-x-4">
-            <div className={`flex items-center ${stage === 'ai-upload' || stage === 'ai-verify' || stage === 'human-upload' || stage === 'human-verify' || stage === 'complete' ? 'text-cyan-500' : 'text-gray-600'}`}>
-              <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center ${
-                stage === 'ai-upload' || stage === 'ai-verify' || stage === 'human-upload' || stage === 'human-verify' || stage === 'complete'
-                  ? 'border-cyan-500 bg-cyan-500/20' 
-                  : 'border-gray-600'
-              }`}>
-                {aiVerification === 'ai' ? <CheckCircle2 className="w-6 h-6" /> : <Bot className="w-5 h-5" />}
-              </div>
-              <span className="ml-2 text-sm font-medium">AI Image</span>
-            </div>
-            <div className={`w-16 h-0.5 ${stage === 'human-upload' || stage === 'human-verify' || stage === 'complete' ? 'bg-cyan-500' : 'bg-gray-600'}`} />
-            <div className={`flex items-center ${stage === 'human-upload' || stage === 'human-verify' || stage === 'complete' ? 'text-cyan-500' : 'text-gray-600'}`}>
-              <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center ${
-                stage === 'human-upload' || stage === 'human-verify' || stage === 'complete'
-                  ? 'border-cyan-500 bg-cyan-500/20' 
-                  : 'border-gray-600'
-              }`}>
-                {humanVerification === 'human' ? <CheckCircle2 className="w-6 h-6" /> : <User className="w-5 h-5" />}
-              </div>
-              <span className="ml-2 text-sm font-medium">Human Photo</span>
+        {/* Game Progress Indicator */}
+        {gameStage === 'playing' && (
+          <div className="flex items-center justify-center mb-8">
+            <div className="flex items-center space-x-2">
+              {GAME_PATTERN.map((type, index) => (
+                <div key={index} className="flex items-center">
+                  <div className={`w-12 h-12 rounded-full border-2 flex items-center justify-center transition-all ${
+                    index < currentRound
+                      ? 'border-green-500 bg-green-500/20'
+                      : index === currentRound
+                      ? 'border-cyan-500 bg-cyan-500/20 scale-110'
+                      : 'border-gray-600 bg-gray-800/50'
+                  }`}>
+                    {index < currentRound ? (
+                      roundResults[index]?.correct ? (
+                        <CheckCircle2 className="w-6 h-6 text-green-400" />
+                      ) : (
+                        <XCircle className="w-6 h-6 text-red-400" />
+                      )
+                    ) : (
+                      <span className="text-sm font-semibold">{index + 1}</span>
+                    )}
+                  </div>
+                  {index < GAME_PATTERN.length - 1 && (
+                    <div className={`w-8 h-0.5 ${
+                      index < currentRound ? 'bg-green-500' : 'bg-gray-600'
+                    }`} />
+                  )}
+                </div>
+              ))}
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Stage 1: AI Image Upload */}
-        {stage === 'ai-upload' && (
+        {/* Score Display */}
+        {gameStage === 'playing' && (
+          <div className="text-center mb-6">
+            <div className="inline-flex items-center gap-2 px-4 py-2 bg-neutral-800 rounded-lg">
+              <Trophy className="w-5 h-5 text-yellow-400" />
+              <span className="text-lg font-semibold">
+                Score: <span className="text-cyan-400">{score}</span> / {currentRound + 1}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Start Screen */}
+        {gameStage === 'start' && (
           <Card>
-            <CardContent className="p-6">
-              <div className="text-center mb-6">
-                <Bot className="mx-auto h-12 w-12 text-fuchsia-500 mb-4" />
-                <h2 className="text-2xl font-semibold mb-2">Step 1: Upload AI-Generated Image</h2>
-                <p className="text-gray-400">
-                  Upload an AI-generated image. You'll need to identify it correctly in the next step.
+            <CardContent className="p-8">
+              <div className="text-center mb-8">
+                <div className="inline-flex items-center justify-center gap-3 mb-6">
+                  <Bot className="h-12 w-12 text-fuchsia-500" />
+                  <User className="h-12 w-12 text-cyan-500" />
+                </div>
+                <h2 className="text-2xl font-semibold mb-4">Ready to Play?</h2>
+                <p className="text-gray-400 mb-2">
+                  Upload 4 images to start the game.
                 </p>
-              </div>
-              <div
-                onDrop={(e) => handleDrop(e, 'ai')}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onClick={() => aiFileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
-                  isDragging
-                    ? 'border-fuchsia-500 bg-fuchsia-500/10'
-                    : 'border-neutral-700 hover:border-neutral-600'
-                }`}
-              >
+                <p className="text-sm text-gray-500 mb-6">
+                  You'll need to identify whether each image is AI-generated or human-created. Can you tell the difference?
+                </p>
+                <Button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-gradient-to-r from-fuchsia-500 to-cyan-500 hover:from-fuchsia-600 hover:to-cyan-600 text-lg px-8 py-6"
+                >
+                  Upload 4 Images to Start
+                </Button>
                 <input
-                  ref={aiFileInputRef}
+                  ref={fileInputRef}
                   type="file"
                   accept="image/*"
-                  onChange={(e) => handleFileInputChange(e, 'ai')}
+                  multiple
+                  onChange={handleFileInputChange}
                   className="hidden"
                 />
-                <Upload className="mx-auto h-12 w-12 text-neutral-400 mb-4" />
-                <p className="text-lg font-medium text-gray-200 mb-2">
-                  Drop an AI-generated image here or click to upload
-                </p>
-                <p className="text-sm text-gray-400">
-                  Upload an image created by AI (e.g., DALL-E, Midjourney, Stable Diffusion)
-                </p>
               </div>
             </CardContent>
           </Card>
         )}
 
-        {/* Stage 2: AI Image Verification */}
-        {stage === 'ai-verify' && aiPreview && (
+        {/* Playing Stage */}
+        {gameStage === 'playing' && currentImage && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardContent className="p-6">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-semibold">AI-Generated Image</h2>
-                    <button
-                      onClick={handleRemoveAiFile}
-                      className="text-gray-400 hover:text-white transition-colors"
-                    >
-                      <X className="h-5 w-5" />
-                    </button>
+                    <h2 className="text-xl font-semibold">
+                      Round {currentRound + 1} of {GAME_PATTERN.length}
+                    </h2>
                   </div>
                   <div className="relative rounded-lg overflow-hidden border border-neutral-800">
                     <img
-                      src={aiPreview}
-                      alt="AI Generated"
+                      src={currentImage}
+                      alt="Identify this image"
                       className="w-full h-auto max-h-[500px] object-contain bg-neutral-900"
                     />
                   </div>
-                  {aiImage && (
-                    <div className="flex items-center gap-2 text-sm text-gray-400">
-                      <ImageIcon className="h-4 w-4" />
-                      <span>{aiImage.name}</span>
-                      <span className="text-neutral-600">
-                        ({(aiImage.size / 1024 / 1024).toFixed(2)} MB)
-                      </span>
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>
@@ -257,175 +255,50 @@ export default function ProofOfHumanWork() {
                 <div className="space-y-4">
                   <h2 className="text-xl font-semibold mb-4">Identify This Image</h2>
                   <p className="text-gray-400 mb-6">
-                    Is this image AI-generated or human-created? Select the correct answer.
+                    Is this image AI-generated or human-created? Select your answer.
                   </p>
                   
-                  {aiVerification === null ? (
+                  {!showResult ? (
                     <div className="space-y-3">
                       <Button
-                        onClick={() => handleAiVerification('ai')}
+                        onClick={() => handleUserChoice('ai')}
                         className="w-full bg-fuchsia-600 hover:bg-fuchsia-700 h-16 text-lg flex items-center justify-center gap-3"
+                        disabled={userChoice !== null}
                       >
                         <Bot className="h-5 w-5" />
                         AI Generated
                       </Button>
                       <Button
-                        onClick={() => handleAiVerification('human')}
-                        variant="outline"
-                        className="w-full h-16 text-lg flex items-center justify-center gap-3 border-neutral-700 hover:bg-neutral-800"
-                      >
-                        <User className="h-5 w-5" />
-                        Human Generated
-                      </Button>
-                    </div>
-                  ) : aiVerification === 'ai' ? (
-                    <div className="text-center py-8">
-                      <CheckCircle2 className="mx-auto h-16 w-16 text-green-400 mb-4" />
-                      <p className="text-xl font-semibold text-green-400 mb-2">Correct!</p>
-                      <p className="text-gray-400">This is an AI-generated image.</p>
-                      <p className="text-sm text-gray-500 mt-4">Moving to next step...</p>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8">
-                      <XCircle className="mx-auto h-16 w-16 text-red-400 mb-4" />
-                      <p className="text-xl font-semibold text-red-400 mb-2">Incorrect</p>
-                      <p className="text-gray-400">Please try again.</p>
-                      <Button
-                        onClick={() => setAiVerification(null)}
-                        className="mt-4"
-                        variant="outline"
-                      >
-                        Try Again
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Stage 3: Human Photo Upload */}
-        {stage === 'human-upload' && (
-          <Card>
-            <CardContent className="p-6">
-              <div className="text-center mb-6">
-                <User className="mx-auto h-12 w-12 text-cyan-500 mb-4" />
-                <h2 className="text-2xl font-semibold mb-2">Step 2: Upload Human-Generated Photo</h2>
-                <p className="text-gray-400">
-                  Upload a real photo taken by a human. You'll need to identify it correctly in the next step.
-                </p>
-              </div>
-              <div
-                onDrop={(e) => handleDrop(e, 'human')}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onClick={() => humanFileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
-                  isDragging
-                    ? 'border-cyan-500 bg-cyan-500/10'
-                    : 'border-neutral-700 hover:border-neutral-600'
-                }`}
-              >
-                <input
-                  ref={humanFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleFileInputChange(e, 'human')}
-                  className="hidden"
-                />
-                <Upload className="mx-auto h-12 w-12 text-neutral-400 mb-4" />
-                <p className="text-lg font-medium text-gray-200 mb-2">
-                  Drop a human photo here or click to upload
-                </p>
-                <p className="text-sm text-gray-400">
-                  Upload a real photograph taken by a human (e.g., camera photo, hand-drawn scan)
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Stage 4: Human Photo Verification */}
-        {stage === 'human-verify' && humanPreview && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardContent className="p-6">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-semibold">Human-Generated Photo</h2>
-                    <button
-                      onClick={handleRemoveHumanFile}
-                      className="text-gray-400 hover:text-white transition-colors"
-                    >
-                      <X className="h-5 w-5" />
-                    </button>
-                  </div>
-                  <div className="relative rounded-lg overflow-hidden border border-neutral-800">
-                    <img
-                      src={humanPreview}
-                      alt="Human Generated"
-                      className="w-full h-auto max-h-[500px] object-contain bg-neutral-900"
-                    />
-                  </div>
-                  {humanImage && (
-                    <div className="flex items-center gap-2 text-sm text-gray-400">
-                      <ImageIcon className="h-4 w-4" />
-                      <span>{humanImage.name}</span>
-                      <span className="text-neutral-600">
-                        ({(humanImage.size / 1024 / 1024).toFixed(2)} MB)
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-6">
-                <div className="space-y-4">
-                  <h2 className="text-xl font-semibold mb-4">Identify This Photo</h2>
-                  <p className="text-gray-400 mb-6">
-                    Is this photo AI-generated or human-created? Select the correct answer.
-                  </p>
-                  
-                  {humanVerification === null ? (
-                    <div className="space-y-3">
-                      <Button
-                        onClick={() => handleHumanVerification('ai')}
-                        variant="outline"
-                        className="w-full h-16 text-lg flex items-center justify-center gap-3 border-neutral-700 hover:bg-neutral-800"
-                      >
-                        <Bot className="h-5 w-5" />
-                        AI Generated
-                      </Button>
-                      <Button
-                        onClick={() => handleHumanVerification('human')}
+                        onClick={() => handleUserChoice('human')}
                         className="w-full bg-cyan-600 hover:bg-cyan-700 h-16 text-lg flex items-center justify-center gap-3"
+                        disabled={userChoice !== null}
                       >
                         <User className="h-5 w-5" />
                         Human Generated
                       </Button>
                     </div>
-                  ) : humanVerification === 'human' ? (
-                    <div className="text-center py-8">
-                      <CheckCircle2 className="mx-auto h-16 w-16 text-green-400 mb-4" />
-                      <p className="text-xl font-semibold text-green-400 mb-2">Correct!</p>
-                      <p className="text-gray-400">This is a human-generated photo.</p>
-                      <p className="text-sm text-gray-500 mt-4">Completing verification...</p>
-                    </div>
                   ) : (
                     <div className="text-center py-8">
-                      <XCircle className="mx-auto h-16 w-16 text-red-400 mb-4" />
-                      <p className="text-xl font-semibold text-red-400 mb-2">Incorrect</p>
-                      <p className="text-gray-400">Please try again.</p>
-                      <Button
-                        onClick={() => setHumanVerification(null)}
-                        className="mt-4"
-                        variant="outline"
-                      >
-                        Try Again
-                      </Button>
+                      {roundResults[currentRound]?.correct ? (
+                        <>
+                          <CheckCircle2 className="mx-auto h-16 w-16 text-green-400 mb-4" />
+                          <p className="text-xl font-semibold text-green-400 mb-2">Correct!</p>
+                          <p className="text-gray-400">
+                            This is a {GAME_PATTERN[currentRound] === 'ai' ? 'AI-generated' : 'human-created'} image.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="mx-auto h-16 w-16 text-red-400 mb-4" />
+                          <p className="text-xl font-semibold text-red-400 mb-2">Incorrect</p>
+                          <p className="text-gray-400">
+                            This is actually a {GAME_PATTERN[currentRound] === 'ai' ? 'AI-generated' : 'human-created'} image.
+                          </p>
+                        </>
+                      )}
+                      <p className="text-sm text-gray-500 mt-4">
+                        {currentRound < GAME_PATTERN.length - 1 ? 'Moving to next round...' : 'Game complete!'}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -434,35 +307,62 @@ export default function ProofOfHumanWork() {
           </div>
         )}
 
-        {/* Stage 5: Complete */}
-        {stage === 'complete' && (
+        {/* Complete Stage */}
+        {gameStage === 'complete' && (
           <Card>
             <CardContent className="p-6">
               <div className="text-center py-12">
-                <CheckCircle2 className="mx-auto h-20 w-20 text-green-400 mb-6" />
+                <Trophy className="mx-auto h-20 w-20 text-yellow-400 mb-6" />
                 <h2 className="text-3xl font-bold mb-4 bg-gradient-to-r from-fuchsia-500 to-cyan-500 bg-clip-text text-transparent">
-                  Verification Complete!
+                  Game Complete!
                 </h2>
-                <p className="text-gray-400 mb-8 text-lg">
-                  You have successfully demonstrated your ability to distinguish between AI-generated and human-created content.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto mb-8">
-                  <div className="bg-fuchsia-500/10 border border-fuchsia-500/20 rounded-lg p-6">
-                    <Bot className="mx-auto h-8 w-8 text-fuchsia-500 mb-3" />
-                    <p className="font-semibold text-fuchsia-400 mb-2">AI Image</p>
-                    <p className="text-sm text-gray-400">Correctly identified</p>
-                  </div>
-                  <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-6">
-                    <User className="mx-auto h-8 w-8 text-cyan-500 mb-3" />
-                    <p className="font-semibold text-cyan-400 mb-2">Human Photo</p>
-                    <p className="text-sm text-gray-400">Correctly identified</p>
-                  </div>
+                <div className="mb-8">
+                  <p className="text-4xl font-bold text-cyan-400 mb-2">
+                    {score} / {GAME_PATTERN.length}
+                  </p>
+                  <p className="text-gray-400 text-lg">
+                    {score === GAME_PATTERN.length 
+                      ? 'Perfect score! You\'re a master at identifying AI vs Human content!' 
+                      : score >= GAME_PATTERN.length / 2
+                      ? 'Good job! You have a good eye for detail.'
+                      : 'Keep practicing! You\'ll get better with time.'}
+                  </p>
                 </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 max-w-3xl mx-auto mb-8">
+                  {roundResults.map((result, index) => (
+                    <div
+                      key={index}
+                      className={`rounded-lg p-4 border ${
+                        result.correct
+                          ? 'bg-green-500/10 border-green-500/20'
+                          : 'bg-red-500/10 border-red-500/20'
+                      }`}
+                    >
+                      <div className="flex items-center justify-center mb-2">
+                        {result.correct ? (
+                          <CheckCircle2 className="h-6 w-6 text-green-400" />
+                        ) : (
+                          <XCircle className="h-6 w-6 text-red-400" />
+                        )}
+                      </div>
+                      <p className="text-sm font-semibold mb-1">Round {result.round}</p>
+                      <p className="text-xs text-gray-400">
+                        You: {result.userChoice === 'ai' ? 'AI' : 'Human'}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        Actual: {result.actualType === 'ai' ? 'AI' : 'Human'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                
                 <Button
                   onClick={handleReset}
-                  className="bg-gradient-to-r from-fuchsia-500 to-cyan-500 hover:from-fuchsia-600 hover:to-cyan-600"
+                  className="bg-gradient-to-r from-fuchsia-500 to-cyan-500 hover:from-fuchsia-600 hover:to-cyan-600 text-lg px-8 py-6"
                 >
-                  Start Over
+                  <RotateCcw className="w-5 h-5 mr-2" />
+                  Play Again
                 </Button>
               </div>
             </CardContent>
