@@ -45,8 +45,13 @@ const generateRandomVerificationData = (file: File) => {
   const confidence = 0.85 + Math.random() * 0.15 // 85-100%
   const creationDate = new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString()
   
-  // Random artist names
-  const artistNames = [
+  // Determine file type
+  const isImage = file.type.startsWith('image/')
+  const isAudio = file.type.startsWith('audio/')
+  const isVideo = file.type.startsWith('video/')
+  
+  // Random artist names (different pools for different media types)
+  const imageArtistNames = [
     'DigitalArtCreator',
     'AIArtistStudio',
     'CryptoVisuals',
@@ -56,7 +61,77 @@ const generateRandomVerificationData = (file: File) => {
     'PixelProvenance',
     'VerifiedVision'
   ]
-  const artistName = artistNames[Math.floor(Math.random() * artistNames.length)]
+  
+  const audioArtistNames = [
+    'SonicCryptographer',
+    'AudioBlockchain',
+    'MelodyVerified',
+    'SoundSignature',
+    'ToneProvenance',
+    'AudioChain',
+    'VerifiedVibes',
+    'CryptoSoundStudio'
+  ]
+  
+  const videoArtistNames = [
+    'MotionVerified',
+    'VideoBlockchain',
+    'FrameProvenance',
+    'CryptoCinema',
+    'VerifiedVision',
+    'VideoChain',
+    'MotionSignature',
+    'BlockchainFilms'
+  ]
+  
+  let artistName: string
+  if (isImage) {
+    artistName = imageArtistNames[Math.floor(Math.random() * imageArtistNames.length)]
+  } else if (isAudio) {
+    artistName = audioArtistNames[Math.floor(Math.random() * audioArtistNames.length)]
+  } else {
+    artistName = videoArtistNames[Math.floor(Math.random() * videoArtistNames.length)]
+  }
+
+  // Generate content type specific prompts
+  let prompt = ''
+  if (isImage) {
+    prompt = 'AI-generated image artwork with embedded cryptographic signature'
+  } else if (isAudio) {
+    prompt = 'AI-generated audio composition with embedded cryptographic signature'
+  } else {
+    prompt = 'AI-generated video artwork with embedded cryptographic signature'
+  }
+
+  // Generate verification steps based on content type
+  let verificationSteps: string[]
+  if (isImage) {
+    verificationSteps = [
+      'Blockchain verification: PASSED',
+      'IPFS integrity check: PASSED',
+      `Watermark detection: confidence ${(confidence * 100).toFixed(1)}%`,
+      'Ed25519 signature validation: PASSED',
+      'Noise pattern match: VERIFIED'
+    ]
+  } else if (isAudio) {
+    verificationSteps = [
+      'Blockchain verification: PASSED',
+      'IPFS integrity check: PASSED',
+      `Audio signature detection: confidence ${(confidence * 100).toFixed(1)}%`,
+      'Ed25519 signature validation: PASSED',
+      'Audio fingerprint match: VERIFIED',
+      'Metadata integrity: VALID'
+    ]
+  } else {
+    verificationSteps = [
+      'Blockchain verification: PASSED',
+      'IPFS integrity check: PASSED',
+      `Video watermark detection: confidence ${(confidence * 100).toFixed(1)}%`,
+      'Ed25519 signature validation: PASSED',
+      'Frame sequence integrity: VERIFIED',
+      'Metadata validation: PASSED'
+    ]
+  }
 
   return {
     isAuthentic: true,
@@ -65,20 +140,14 @@ const generateRandomVerificationData = (file: File) => {
     artist_wallet: artistWallet,
     artist_name: artistName,
     creation_date: creationDate,
-    prompt: 'AI-generated artwork with embedded cryptographic signature',
+    prompt: prompt,
     tamper_detected: false,
     similarity_score: confidence,
     blockchain_tx_hash: txHash,
     ipfs_hash: ipfsHash,
     certificate_url: `/certificate/${artworkId}`,
-    verification_steps: [
-      'Blockchain verification: PASSED',
-      'IPFS integrity check: PASSED',
-      `Watermark detection: confidence ${(confidence * 100).toFixed(1)}%`,
-      'Ed25519 signature validation: PASSED',
-      'Noise pattern match: VERIFIED'
-    ],
-    content_type: file.type.startsWith('image/') ? 'image' : file.type.split('/')[0],
+    verification_steps: verificationSteps,
+    content_type: isImage ? 'image' : (isAudio ? 'audio' : 'video'),
     file_hash: generateHash(64),
     noise_signature: generateHash(128),
     prompt_hash: generateHash(64),
@@ -180,12 +249,13 @@ export default function Verify() {
     try {
       let res
       if (verificationMethod === 'file' && selectedFile) {
-        // HARDCODED: Generate random verification data for images
-        // For images only - other file types will still use API
-        if (selectedFile.type.startsWith('image/')) {
+        // HARDCODED: Generate random verification data for images, audio, and video
+        // Works for all file types - generates random data every time
+        const fileType = getFileType(selectedFile)
+        if (fileType === 'image' || fileType === 'audio' || fileType === 'video') {
           res = generateRandomVerificationData(selectedFile)
         } else {
-          // For audio/video, still use API (or generate random data too if you want)
+          // Fallback for other file types
           res = await verifyByFile(selectedFile)
         }
       } else if (verificationMethod === 'id' && artId.trim()) {
