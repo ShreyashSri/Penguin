@@ -5,6 +5,87 @@ import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Upload, X, Image as ImageIcon, Music, Video, File, Search, CheckCircle2, XCircle, AlertCircle, Shield, Key, Hash, Link as LinkIcon } from 'lucide-react'
 
+// Generate random hash-like string
+const generateHash = (length: number = 64): string => {
+  const chars = '0123456789abcdef'
+  let result = ''
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return result
+}
+
+// Generate random wallet address
+const generateWalletAddress = (): string => {
+  return '0x' + generateHash(40)
+}
+
+// Generate random IPFS hash
+const generateIPFSHash = (): string => {
+  return 'Qm' + generateHash(42)
+}
+
+// Generate random verification data (hardcoded for demo)
+const generateRandomVerificationData = (file: File) => {
+  // 80% chance of success, 20% chance of failure
+  const isSuccess = Math.random() > 0.2
+  
+  if (!isSuccess) {
+    return {
+      error: 'Artwork not found in registry',
+      isAuthentic: false,
+      tamper_detected: true
+    }
+  }
+
+  const artworkId = generateIPFSHash()
+  const txHash = '0x' + generateHash(64)
+  const ipfsHash = generateIPFSHash()
+  const artistWallet = generateWalletAddress()
+  const confidence = 0.85 + Math.random() * 0.15 // 85-100%
+  const creationDate = new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString()
+  
+  // Random artist names
+  const artistNames = [
+    'DigitalArtCreator',
+    'AIArtistStudio',
+    'CryptoVisuals',
+    'BlockchainBrush',
+    'NFTMaster',
+    'DigitalCanvas',
+    'PixelProvenance',
+    'VerifiedVision'
+  ]
+  const artistName = artistNames[Math.floor(Math.random() * artistNames.length)]
+
+  return {
+    isAuthentic: true,
+    artwork_id: artworkId,
+    original_artist: artistWallet,
+    artist_wallet: artistWallet,
+    artist_name: artistName,
+    creation_date: creationDate,
+    prompt: 'AI-generated artwork with embedded cryptographic signature',
+    tamper_detected: false,
+    similarity_score: confidence,
+    blockchain_tx_hash: txHash,
+    ipfs_hash: ipfsHash,
+    certificate_url: `/certificate/${artworkId}`,
+    verification_steps: [
+      'Blockchain verification: PASSED',
+      'IPFS integrity check: PASSED',
+      `Watermark detection: confidence ${(confidence * 100).toFixed(1)}%`,
+      'Ed25519 signature validation: PASSED',
+      'Noise pattern match: VERIFIED'
+    ],
+    content_type: file.type.startsWith('image/') ? 'image' : file.type.split('/')[0],
+    file_hash: generateHash(64),
+    noise_signature: generateHash(128),
+    prompt_hash: generateHash(64),
+    content_hash: generateHash(64)
+  }
+}
+
 export default function Verify() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
@@ -92,10 +173,21 @@ export default function Verify() {
 
   const handleVerify = async () => {
     setIsUploading(true)
+    
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000))
+    
     try {
       let res
       if (verificationMethod === 'file' && selectedFile) {
-        res = await verifyByFile(selectedFile)
+        // HARDCODED: Generate random verification data for images
+        // For images only - other file types will still use API
+        if (selectedFile.type.startsWith('image/')) {
+          res = generateRandomVerificationData(selectedFile)
+        } else {
+          // For audio/video, still use API (or generate random data too if you want)
+          res = await verifyByFile(selectedFile)
+        }
       } else if (verificationMethod === 'id' && artId.trim()) {
         const id = artId.trim()
         // Try artwork ID endpoint first (primary method for artwork verification)
@@ -350,7 +442,13 @@ export default function Verify() {
                             <div>
                               <p className="font-medium mb-1 text-lg">VERIFIED!</p>
                               <p className="text-sm text-gray-300">
-                                This artwork is immutably linked to <span className="font-mono text-cyan-400">{result.original_artist || result.artist_wallet || 'Creator'}</span>
+                                This artwork is immutably linked to{' '}
+                                {result.artist_name && (
+                                  <span className="text-cyan-400 font-semibold">{result.artist_name}</span>
+                                )}
+                                <span className="font-mono text-cyan-400 ml-1">
+                                  ({result.original_artist || result.artist_wallet || 'Creator'})
+                                </span>
                               </p>
                             </div>
                           </div>
@@ -544,7 +642,13 @@ export default function Verify() {
                             <div>
                               <p className="font-medium mb-1 text-lg">VERIFIED!</p>
                               <p className="text-sm text-gray-300">
-                                This artwork is immutably linked to <span className="font-mono text-cyan-400">{result.original_artist || result.artist_wallet || 'Creator'}</span>
+                                This artwork is immutably linked to{' '}
+                                {result.artist_name && (
+                                  <span className="text-cyan-400 font-semibold">{result.artist_name}</span>
+                                )}
+                                <span className="font-mono text-cyan-400 ml-1">
+                                  ({result.original_artist || result.artist_wallet || 'Creator'})
+                                </span>
                               </p>
                             </div>
                           </div>

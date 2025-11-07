@@ -1,7 +1,7 @@
 import React from 'react'
 import Topbar from '../components/Topbar'
 import { Link } from 'react-router-dom'
-import { ShieldCheck, Image, BadgeCheck, Network, Lock, Fingerprint, FileCheck, AlertTriangle, CheckCircle2, ArrowRight, Zap, Database, Link2 } from 'lucide-react'
+import { ShieldCheck, Image, BadgeCheck, Network, Lock, Fingerprint, FileCheck, AlertTriangle, CheckCircle2, ArrowRight, Zap, Database, Link2, Download } from 'lucide-react'
 import { motion } from 'framer-motion'
 
 export default function LandingPage() {
@@ -271,6 +271,15 @@ export default function LandingPage() {
                   >
                     Verify an Artwork Now
                   </Link>
+                  <a
+                    href="https://drive.google.com/file/d/1O5ZPIgUtxY8KIvn-vblJyIt_7SoI6ZkK/view?usp=sharing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="border border-cyan-500/50 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 font-medium py-3 px-6 rounded-lg transition-transform duration-200 hover:scale-[1.02] flex items-center gap-2"
+                  >
+                    Download Extension
+                    <Download size={18} />
+                  </a>
                 </motion.div>
               </div>
               
