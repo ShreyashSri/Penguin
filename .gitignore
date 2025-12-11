@@ -14,14 +14,44 @@ dist/
 api/tmp/
 api/bin/
 api/.air*
+api/server
+*.exe
+*.test
+
+# Python
+venv/
+env/
+ENV/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
 
 # Build artifacts
 *.log
 .DS_Store
+artifacts/
+cache/
+tmp/
+**/tmp/
 
 # Editor
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # Storage outputs
 api/storage/artifacts/
@@ -33,5 +63,6 @@ api/storage/manifests/
 .env.*
 **/.env.*
 
+# Model store and logs
 model_store/
 logs/
