@@ -1,299 +1,151 @@
-# Proof-of-Art (cDNA)
+# Penguin: Proof-of-Art (cDNA)
 
-End-to-end scaffold for the cDNA framework: backend (Go + Echo), frontend (React + Vite + Tailwind), and a Chrome extension (TypeScript + Vite).
+> A robust, end-to-end framework for authenticated digital art generation and provenance, leveraging Ethereum Sepolia and IPFS.
 
-**Hackathon-Ready**: Complete Ethereum Sepolia integration with Pinata IPFS storage and on-chain manifest storage.
+**Penguin** establishes a secure lineage for AI-generated content by combining cryptographic signing, steganographic watermarking, and blockchain-based immutable storage. It provides a complete "cDNA" (creative DNA) for digital assets, ensuring transparency and authenticity from creation to certification.
 
-## Prereqs
-- Go 1.21+
-- Node 20+
-- npm or pnpm
-- Chrome/Chromium for the extension
-- Pinata account (for IPFS storage) - [Sign up](https://pinata.cloud)
-- Infura account (for Ethereum Sepolia RPC) - [Sign up](https://infura.io)
-- Sepolia testnet ETH - [Get from faucet](https://sepoliafaucet.com/)
-- Air (for hot-reload development) - Install with: `go install github.com/air-verse/air@latest`
+## 🚀 Key Features
 
-## Backend
+- **Authenticated Generation**: Deterministic AI art generation with embedded cryptographic proofs.
+- **Steganographic Watermarking**: Unique, imperceptible noise patterns embedding creator identity.
+- **Immutable Provenance**: On-chain manifest storage on Ethereum Sepolia for tamper-proof history.
+- **Decentralized Storage**: Assets stored on IPFS via Pinata for reliable, distributed access.
+- **Browser Extension**: Seamlessly capture and certify prompts directly from web interfaces.
+- **Public Verification**: Open tools for verifying asset authenticity and lineage without requiring registration.
 
-### Complete Setup Guide
+## 🛠 Technology Stack
 
-#### 1. Install Hardhat Dependencies
+- **Backend**: Go (Echo Framework)
+- **Frontend**: React, Vite, Tailwind CSS
+- **Smart Contracts**: Solidity, Hardhat, Ethereum Sepolia
+- **Storage**: Pinata (IPFS)
+- **Machine Learning**: TorchServe (PyTorch)
+- **Cryptography**: Ed25519, BLAKE3, SHA-256
+
+## 📋 Prerequisites
+
+Before you begin, ensure you have the following installed and configured:
+
+- **Go 1.22+**
+- **Node.js 20+** (with npm or pnpm)
+- **Air**: For backend hot-reloading (`go install github.com/air-verse/air@latest`)
+- **External Accounts**:
+  - [Pinata](https://pinata.cloud) (for IPFS storage)
+  - [Infura](https://infura.io) (for Ethereum RPC)
+  - [Sepolia Faucet](https://sepoliafaucet.com/) (for testnet ETH)
+
+## 📦 Installation & Setup
+
+### 1. Repository Setup
 
 ```bash
-# At repository root
+# Clone the repository
+git clone https://github.com/yourusername/penguin.git
+cd penguin
+
+# Install root dependencies (Hardhat)
 npm install
 ```
 
-This installs Hardhat and required tooling for contract deployment.
+### 2. Smart Contract Deployment (Sepolia)
 
-#### 2. Deploy Smart Contract to Sepolia
+Create a `.env` file at the root to configure your blockchain credentials:
+
+```env
+INFURA_PROJECT_ID=your_infura_id
+PRIVATE_KEY=0x_your_wallet_private_key
+```
+
+Deploy the contract:
 
 ```bash
-# Make sure you have .env file at root with:
-# INFURA_PROJECT_ID=your_infura_project_id
-# PRIVATE_KEY=0x... (your wallet private key with Sepolia ETH)
-
-# Deploy contract
 npx hardhat run scripts/deploy.js --network sepolia
 ```
 
-The deploy script will:
-- Compile the `ImageProvenance.sol` contract
-- Deploy to Sepolia testnet
-- Print the deployed contract address
-- Write ABI to `api/internal/eth/abi.json`
-- Write contract address to `api/internal/eth/contract_address.txt`
+> **Note**: This will generate `api/internal/eth/abi.json` and `api/internal/eth/contract_address.txt`. Copy the contract address for the backend configuration.
 
-**Copy the contract address** - you'll need it for the `.env` file.
+### 3. Backend Service
 
-#### 3. Configure Backend Environment
+Navigate to the API directory and configure the environment:
 
 ```bash
 cd api
-
-# Install Go dependencies
 go mod tidy
-
-# Create .env file
 cp .env.example .env
 ```
 
-Edit `api/.env` with your credentials:
+Edit `api/.env` with your specific keys:
 
-```bash
-# Ethereum Sepolia Configuration
-INFURA_PROJECT_ID=your_infura_project_id
-RPC_URL=https://sepolia.infura.io/v3/your_infura_project_id
+```env
+# Ethereum
+INFURA_PROJECT_ID=your_infura_id
+RPC_URL=https://sepolia.infura.io/v3/your_infura_id
+PRIVATE_KEY=0x_your_private_key
+CONTRACT_ADDRESS=0x_deployed_contract_address
 
-# Private key for signing transactions (DO NOT commit!)
-PRIVATE_KEY=0x...  # Your wallet private key (must have Sepolia ETH)
-
-# Contract address (from deployment step above)
-CONTRACT_ADDRESS=0x...  # Paste the deployed contract address here
-
-# Pinata IPFS Storage
-PINATA_API_KEY=your_pinata_api_key
+# IPFS (Pinata)
+PINATA_API_KEY=your_pinata_key
 PINATA_API_SECRET=your_pinata_secret
 ```
 
-#### 4. Install Air (Hot-Reload Development)
-
-For automatic hot-reload during development:
+Start the backend server:
 
 ```bash
-# Install Air
-go install github.com/air-verse/air@latest
-
-# Add Go bin to PATH (if not already)
-export PATH=$PATH:$(go env GOPATH)/bin
-
-# Verify installation
-air -v
-```
-
-**Note**: The PATH export has been added to your `~/.bashrc`. You may need to restart your terminal or run `source ~/.bashrc` for it to take effect.
-
-#### 5. Run the Backend Server
-
-**Option 1: Using Air (Recommended for Development)**
-```bash
-cd api
+# Using Air (Recommended for dev)
 air
-```
 
-**Option 2: Using Go directly**
-```bash
-cd api
+# OR using Go directly
 go run ./cmd/server
 ```
 
-The server will:
-- Start on `http://localhost:8787`
-- Automatically start TorchServe model server on `http://127.0.0.1:8080`
-- Display configuration status
+The server runs on `http://localhost:8787` and launches TorchServe on `http://127.0.0.1:8080`.
 
-**Model Endpoints:**
-- Model Prediction (via Go API): `POST http://localhost:8787/model/predict`
-- Direct TorchServe: `POST http://127.0.0.1:8080/predictions/poar_detector`
-
-**⚠️ Security Note**: Never commit your `.env` file with real private keys or API secrets!
-
-### Endpoints
-
-**Manifest Upload (Pinata + Ethereum):**
-- POST `/upload` or POST `/manifests` – Upload image manifest to Pinata and store CID on Ethereum Sepolia
-  - Request body:
-    ```json
-    {
-      "image_cid": "Qm...",
-      "creator": "0x...",
-      "prompt": "A beautiful sunset",
-      "model": "DALL-E 3",
-      "origin": "https://example.com",
-      "timestamp": 1234567890,
-      "derived_from": "Qm..." // optional
-    }
-    ```
-  - Response:
-    ```json
-    {
-      "cid": "Qm...",
-      "txHash": "0x...",
-      "etherscan": "https://sepolia.etherscan.io/tx/0x...",
-      "manifest": {...}
-    }
-    ```
-
-**Node/Artifact Flow:**
-- POST `/ext/push` – receive prompt data from extension
-- POST `/node` – create signed node (manual)
-- POST `/artifact` – upload media (multipart: file, nodeId)
-- POST `/finalize` – build manifest from node/artifact keys
-- GET `/verify?key=/ipfs/<key>` – verify signature
-
-**Generation/Certificate Flow:**
-- POST `/generate` – generate AI artwork with certification
-- POST `/import` – import existing artwork for certification
-- GET `/certificate/:id` – get proof certificate for artwork
-- POST `/verify/upload` – upload file for verification
-- GET `/verify/:id` – verify artwork by ID
-
-**Model Inference:**
-- POST `/model/predict` – Run model inference (proxies to TorchServe)
-  - Content-Type: `image/jpeg`, `image/png`, or `image/*`
-  - Body: Raw image bytes
-  - Response:
-    ```json
-    {
-      "authenticity_score": 0.8542,
-      "threshold": 0.6,
-      "status": "AUTHENTIC"
-    }
-    ```
-
-**Health:**
-- GET `/health` – health check
-
-### Example: Upload Manifest
-
-```bash
-curl -X POST http://localhost:8787/upload \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image_cid": "QmYourImageCID",
-    "creator": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-    "prompt": "A futuristic cityscape at sunset",
-    "model": "Midjourney v6",
-    "origin": "https://midjourney.com",
-    "timestamp": 1704067200
-  }'
-```
-
-Response:
-```json
-{
-  "cid": "QmManifestCID",
-  "txHash": "0xabc123...",
-  "etherscan": "https://sepolia.etherscan.io/tx/0xabc123...",
-  "manifest": {
-    "image_cid": "QmYourImageCID",
-    "creator": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-    ...
-  }
-}
-```
-
-### IPFS Storage
-
-The system uses **Pinata** for IPFS storage:
-- Images are uploaded to Pinata and receive a unique CID
-- CIDs are stored in metadata and can be retrieved via gateway
-- Fallback to mock storage if Pinata not configured (development only)
-
-## Frontend
+### 4. Frontend Application
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
 
-# Set API URL (optional, defaults to http://localhost:8787)
+# Optional: Configure API URL
 export VITE_API_URL="http://localhost:8787"
 
-# Run development server
 npm run dev
-# http://localhost:5173
 ```
 
-**Pages:**
-- **Dashboard** – Create, import, and manage certified artworks
-- **Verify** – Verify artwork authenticity by ID or file upload
-- **Session** – View session graphs and node relationships
+Access the dashboard at `http://localhost:5173`.
 
-## Extension
+### 5. Chrome Extension
+
 ```bash
 cd extension
 npm install
 npm run build
-# Load dist/ as unpacked extension (MV3)
 ```
 
-- Captures prompt inputs and submits; sends events to backend `/ext/push`.
-- Toggle capture from popup.
+Load the `dist/` directory as an unpacked extension in Chrome/Chromium (`chrome://extensions`).
 
-## Features
+## 📡 API Overview
 
-- **AI Art Generation** – Generate images with temperature=0 for reproducibility
-- **Watermarking** – Unique noise patterns embedded in images (LSB steganography)
-- **IPFS Storage** – Content stored on Pinata with unique CIDs
-- **Blockchain Proof** – Metadata stored on Polygon testnet (optional)
-- **Cryptographic Signing** – Ed25519 signatures for authenticity
-- **Chrome Extension** – Import AI art from web pages
-- **Public Verification** – Verify artwork authenticity without registration
+### Manifests & Provenance
+- `POST /upload`: Upload authentication manifest to IPFS and Ethereum.
+- `GET /verify?key=/ipfs/<cid>`: verify an asset's signature and provenance.
 
-## Technology Stack
+### Core Workflows
+- `POST /generate`: Create new certified AI artwork.
+- `POST /certificate/:id`: Retrieve proof certificate.
+- `POST /model/predict`: Run authenticity checks against the local model.
 
-- **Backend**: Go 1.21+, Echo framework
-- **Frontend**: React, Vite, Tailwind CSS
-- **Blockchain**: Ethereum Sepolia (via Infura), Solidity smart contracts
-- **Storage**: Pinata (IPFS), Ethereum Sepolia (on-chain manifests)
-- **Crypto**: Ed25519, BLAKE3, SHA-256, Ethereum cryptography
-- **Extension**: TypeScript, Chrome Manifest V3
-- **Smart Contracts**: Hardhat, Solidity ^0.8.20
+### Extension
+- `POST /ext/push`: Receive prompt data captured by the browser extension.
 
-## Notes
+## 🗺 Roadmap
 
-- **Crypto**: Ed25519 signatures (detached JWS-like), BLAKE3 for node hashing, SHA-256 for artifacts
-- **IPFS**: Uses Pinata for reliable IPFS storage and pinning
-- **Blockchain**: Ethereum Sepolia testnet for immutable manifest storage via `ImageProvenance` contract
-- **Watermarking**: Deterministic noise patterns tied to user identity
-- **Gas Optimization**: Contract uses efficient storage patterns and emits events for off-chain indexing
+- [x] Pinata IPFS & Ethereum Sepolia integration
+- [x] Watermarking & Certificate generation
+- [ ] Session graph UI visualization
+- [ ] Perceptual hashing (pHash)
+- [ ] Multi-chain support (Polygon, Base)
 
-## Smart Contract
+---
 
-The `ImageProvenance` contract (`contracts/ImageProvenance.sol`) provides:
-- `storeManifest(string cid)` - Store manifest CID on-chain
-- `getAll()` - Retrieve all stored manifests
-- `ManifestStored` event - Emitted when a manifest is stored
-
-Deploy with:
-```bash
-npx hardhat run scripts/deploy.js --network sepolia
-```
-
-View deployed contract on [Sepolia Etherscan](https://sepolia.etherscan.io/).
-
-## Roadmap
-
-- [x] Pinata IPFS integration
-- [x] Watermarking system
-- [x] Certificate generation
-- [x] Ethereum Sepolia integration
-- [x] On-chain manifest storage
-- [ ] Session graph UI
-- [ ] Perceptual hash (pHash) for images
-- [ ] NFT minting capability
-- [ ] Multi-chain support (Polygon, Base, etc.)
-
+**License**: MIT
