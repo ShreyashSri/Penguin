@@ -55,7 +55,7 @@ function enableNetworkDebugger(tabId: number) {
 			}
 			attachedTabId = tabId;
 			chrome.debugger.sendCommand({ tabId }, "Network.enable", {});
-			console.log("[Background] Network debugger enabled on tab", tabId);
+
 		});
 	} catch (e) {
 		console.warn("[Background] Debugger attach error:", e);
@@ -68,7 +68,7 @@ function disableNetworkDebugger() {
 	attachedTabId = null;
 	try {
 		chrome.debugger.detach({ tabId }, () => {
-			console.log("[Background] Network debugger detached from tab", tabId);
+
 		});
 	} catch {}
 }
@@ -119,7 +119,7 @@ async function setCapturingState(shouldStart: boolean, tabId: number): Promise<C
         
         if (response && response.success) {
             await chrome.storage.local.set({ isCapturing: shouldStart });
-            console.log(`[Background] Capturing state set successfully to: ${shouldStart} in tab ${tabId}.`);
+
             if (shouldStart) enableNetworkDebugger(tabId); else disableNetworkDebugger();
             return { success: true };
         } else {
@@ -136,13 +136,13 @@ async function setCapturingState(shouldStart: boolean, tabId: number): Promise<C
                 target: { tabId: tabId },
                 files: [CONTENT_SCRIPT_FILE]
             });
-            console.log(`[Background] Content script injected into tab ${tabId}. Retrying message.`);
+
             
             const retryResponse: ContentScriptResponse = await chrome.tabs.sendMessage(tabId, message);
 
             if (retryResponse && retryResponse.success) {
                 await chrome.storage.local.set({ isCapturing: shouldStart });
-                console.log(`[Background] Capturing state set successfully on retry to: ${shouldStart} in tab ${tabId}.`);
+
                 if (shouldStart) enableNetworkDebugger(tabId); else disableNetworkDebugger();
                 return { success: true };
             } else {
@@ -163,7 +163,7 @@ async function setCapturingState(shouldStart: boolean, tabId: number): Promise<C
 }
 
 
-console.log("[Background Script] Service Worker started.");
+
 
 function downloadText(filename: string, text: string) {
 	try {
@@ -219,17 +219,13 @@ chrome.runtime.onMessage.addListener(
         tabId: sender.tab?.id ?? 'N/A'
       };
 
-      console.groupCollapsed("--- DOM Path Captured & Stored ---");
-      console.log("Source URL:", capturedData.url);
-      console.log("Captured Path:", capturedData.path);
-      console.log("Time:", capturedData.timestamp);
-      console.groupEnd();
+
       
       chrome.storage.local.set({ latestPath: capturedData }, () => {
         if (chrome.runtime.lastError) {
           console.error("Error setting latestPath:", chrome.runtime.lastError);
         } else {
-          console.log("Latest path successfully saved to storage.");
+
         }
       });
       
@@ -246,7 +242,7 @@ chrome.runtime.onMessage.addListener(
           if (chrome.runtime.lastError) {
             console.error("Error updating pathHistory:", chrome.runtime.lastError);
           } else {
-            console.log(`Path added to history. Total entries: ${history.length}`);
+
           }
         });
       });
@@ -254,9 +250,7 @@ chrome.runtime.onMessage.addListener(
 
     if (request.action === "interactionCaptured") {
         const { interaction } = request as { action: "interactionCaptured"; interaction: InteractionPayload };
-        console.groupCollapsed("--- Interaction Captured ---");
-        console.log(interaction);
-        console.groupEnd();
+
 
         chrome.storage.local.get(['interactionHistory'], (res) => {
             const history: InteractionPayload[] = Array.isArray(res.interactionHistory) ? res.interactionHistory : [];

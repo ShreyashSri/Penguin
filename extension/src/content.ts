@@ -1,41 +1,41 @@
-import { getDomPath } from "./utils/domPath"; 
+import { getDomPath } from "./utils/domPath";
 
 class DomPathCapturer {
-    private listenerActive: boolean = false;
+	private listenerActive: boolean = false;
 
-    private handleClick = (e: MouseEvent) => {
-        e.preventDefault(); 
-        e.stopPropagation();
+	private handleClick = (e: MouseEvent) => {
+		e.preventDefault();
+		e.stopPropagation();
 
-        const target = e.target;
-        if (!(target instanceof Element)) return;
+		const target = e.target;
+		if (!(target instanceof Element)) return;
 
-        const path = getDomPath(target);
+		const path = getDomPath(target);
 
-        console.log(`[Content Script] Path calculated: ${path}`);
 
-        safeSendMessage({
-            action: "domPathFound",
-            path: path,
-            url: window.location.href
-        });
-    }
 
-    public start() {
-        if (!this.listenerActive) {
-            document.body.addEventListener('click', this.handleClick, { capture: true }); 
-            this.listenerActive = true;
-            console.log("[Content Script] DOM Path Click Listener attached.");
-        }
-    }
+		safeSendMessage({
+			action: "domPathFound",
+			path: path,
+			url: window.location.href
+		});
+	}
 
-    public stop() {
-        if (this.listenerActive) {
-            document.body.removeEventListener('click', this.handleClick, { capture: true });
-            this.listenerActive = false;
-            console.log("[Content Script] DOM Path Click Listener detached.");
-        }
-    }
+	public start() {
+		if (!this.listenerActive) {
+			document.body.addEventListener('click', this.handleClick, { capture: true });
+			this.listenerActive = true;
+
+		}
+	}
+
+	public stop() {
+		if (this.listenerActive) {
+			document.body.removeEventListener('click', this.handleClick, { capture: true });
+			this.listenerActive = false;
+
+		}
+	}
 }
 
 const capturer = new DomPathCapturer();
@@ -251,16 +251,16 @@ interface Attachment {
 	type: "image" | "audio" | "video" | "file";
 	url: string;
 	mime?: string;
-	dataUrl?: string; 
+	dataUrl?: string;
 	filename?: string;
 }
 
-async function toDataUrlIfSmall(url: string, maxBytes = 6_000_000): Promise<{ dataUrl?: string; mime?: string }>{
+async function toDataUrlIfSmall(url: string, maxBytes = 6_000_000): Promise<{ dataUrl?: string; mime?: string }> {
 	try {
 		if (url.startsWith('data:')) return { dataUrl: url, mime: url.substring(5, url.indexOf(';')) };
 		const urlObj = new URL(url, window.location.href);
 		if (urlObj.origin !== window.location.origin) {
-			return {}; 
+			return {};
 		}
 		const res = await fetch(url, { credentials: 'omit' });
 		const blob = await res.blob();
@@ -326,7 +326,7 @@ async function collectAttachmentsFrom(container: HTMLElement | null): Promise<At
 				}
 			}
 		});
-	} catch {}
+	} catch { }
 
 	const seen = new Set<string>();
 	const unique: Attachment[] = [];
@@ -354,7 +354,7 @@ async function emitInteraction(provider: Provider) {
 	lastOutputSignature = signature;
 
 	const inputPrompt = extractLatestUserPrompt(provider) || "";
-	const url = window.location.origin; 
+	const url = window.location.origin;
 	const modelVersion = getModelVersion(provider);
 
 	const attachments = await collectAttachmentsFrom(ctx.container);
@@ -380,9 +380,7 @@ async function emitInteraction(provider: Provider) {
 		timestamp: new Date().toISOString()
 	};
 
-	console.groupCollapsed("[Content Script] Interaction captured");
-	console.log(interaction);
-	console.groupEnd();
+
 
 	safeSetStorage({ latestInteraction: interaction });
 	safeSendMessage({ action: "interactionCaptured", interaction });
@@ -390,13 +388,13 @@ async function emitInteraction(provider: Provider) {
 
 function startScraping() {
 	const provider = detectProvider(window.location.href);
-	console.log(`[Content Script] Provider detected: ${provider}`);
+
 
 	if (observer) { observer.disconnect(); observer = null; }
 	if (geminiInterval !== null) { window.clearInterval(geminiInterval); geminiInterval = null; }
 
 	if (provider === 'gemini' || provider === 'perplexity') {
-		emitInteraction(provider); 
+		emitInteraction(provider);
 		geminiInterval = window.setInterval(() => emitInteraction(provider), 800);
 
 		if (provider === 'perplexity') {
@@ -404,13 +402,13 @@ function startScraping() {
 				const userCnt = document.querySelectorAll('[data-author="user"], .message.user, [data-testid="chat-message-user"], [data-testid^="chat-message-"][data-role="user"], article[aria-label*="You"], span[data-lexical-text="true"]').length;
 				const asstCnt = document.querySelectorAll('[data-testid="chat-message-assistant"], [data-testid="chat-message"], [data-testid^="chat-message-"], .prose, [data-testid="response"], .answer, article[aria-label*="Answer"], article .prose, figure, img[src*="user-gen-media-assets" i]').length;
 				const genImgs = document.querySelectorAll('img[src*="user-gen-media-assets" i]').length;
-				console.log(`[Perplexity Debug] userCandidates=${userCnt}, assistantCandidates=${asstCnt}, generatedImgs=${genImgs}`);
-			} catch {}
+
+			} catch { }
 		}
 		return;
 	}
 
-	emitInteraction(provider); 
+	emitInteraction(provider);
 	observer = new MutationObserver(() => emitInteraction(provider));
 	observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 }
@@ -422,28 +420,28 @@ function stopScraping() {
 }
 
 chrome.storage.local.get('isCapturing', (data) => {
-    if (data.isCapturing) {
-        capturer.start();
-        startScraping();
-    }
+	if (data.isCapturing) {
+		capturer.start();
+		startScraping();
+	}
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'SET_CAPTURING') {
-        if (message.value === true) {
-            capturer.start();
-            startScraping();
-        } else {
-            capturer.stop();
-            stopScraping();
-        }
-        sendResponse({ success: true, isCapturing: message.value }); 
-        return true;
-    }
-    if (message.action === 'RESUME_CAPTURING') {
-        console.log("[Content Script] Resume message received. Restarting scraping.");
-        startScraping();
-        sendResponse({ success: true });
-        return true;
-    }
+	if (message.action === 'SET_CAPTURING') {
+		if (message.value === true) {
+			capturer.start();
+			startScraping();
+		} else {
+			capturer.stop();
+			stopScraping();
+		}
+		sendResponse({ success: true, isCapturing: message.value });
+		return true;
+	}
+	if (message.action === 'RESUME_CAPTURING') {
+
+		startScraping();
+		sendResponse({ success: true });
+		return true;
+	}
 });

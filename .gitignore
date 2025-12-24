@@ -38,3 +38,7 @@ logs/
 
 # Python
 venv/
+api/server
+tmp/
+cache/
+artifacts/
