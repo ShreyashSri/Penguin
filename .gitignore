@@ -35,3 +35,6 @@ api/storage/manifests/
 
 model_store/
 logs/
+
+# Python
+venv/
